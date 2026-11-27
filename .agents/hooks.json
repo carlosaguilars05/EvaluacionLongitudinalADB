@@ -1,0 +1,16 @@
+{
+  "clinica-harness-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "edit_file|write_file|replace_file_content|multi_replace_file_content|write_to_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/pre_edit_guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

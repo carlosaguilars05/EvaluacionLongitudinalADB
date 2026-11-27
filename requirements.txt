@@ -1,0 +1,23 @@
+# Backend Web y Plantillas (SSR Jinja2)
+Flask==3.0.0
+Jinja2==3.1.6
+Werkzeug==3.0.0
+
+# Base de Datos Relacional (PostgreSQL)
+psycopg[binary]==3.3.9
+
+# Configuración por Variables de Entorno
+python-dotenv>=1.0.0
+
+# Base de Datos Documental (MongoDB — Fase 4)
+pymongo>=4.6.0
+
+# ETL y Reportes Descargables (Excel / PDF — Fase 6)
+openpyxl>=3.1.0
+reportlab>=4.0.0
+
+# Pruebas Automatizadas (Fase 7)
+pytest>=8.0.0
+
+# Servidor WSGI de Producción (Compute Engine / Linux — Fase 7)
+gunicorn>=21.2.0; sys_platform != 'win32'
