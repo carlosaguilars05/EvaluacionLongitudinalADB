@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Agendar Sesión</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
+</head>
+<body>
+    <nav>
+        <h2>Sistema de Gestión Clínica</h2>
+        <div>
+            <!-- Solo el Admin (rol 1) ve el catálogo global -->
+            {% if session.get('usuario_rol') == 1 %}
+                <a href="{{ url_for('principal') }}">Inicio</a>
+                <a href="{{ url_for('pacientes') }}">Pacientes</a>
+                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
+                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
+            {% endif %}
+
+            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
+            {% if session.get('usuario_rol') == 2 %}
+                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
+            {% endif %}
+
+            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
+            <a href="{{ url_for('sesiones') }}">Agenda</a>
+            
+            <!-- Botón de Salir para todos -->
+            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
+        </div>
+    </nav>
+
+    <div class="contenedor">
+        <h1>Programar Nueva Sesión</h1>
+        <form action="{{ url_for('registra_sesion') }}" method="POST" style="margin-top: 1.5rem;">
+            
+            <div class="grupo-form">
+                <label>Vínculo Clínico (Terapeuta - Paciente):</label>
+                <select name="id_asignacion" required>
+                    <option value="" disabled selected>-- Seleccione la asignación activa --</option>
+                    {% for a in Asignaciones %}
+                    <option value="{{ a[0] }}">{{ a[1] }} (atiende a) {{ a[2] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="grupo-form">
+                <label>Modalidad:</label>
+                <select name="id_modalidad" required>
+                    <option value="" disabled selected>-- Seleccione la modalidad --</option>
+                    {% for m in Modalidades %}
+                    <option value="{{ m[0] }}">{{ m[1] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div style="display: flex; gap: 1rem;">
+                <div class="grupo-form" style="flex: 1;">
+                    <label>Fecha de la Sesión:</label>
+                    <input type="date" name="fecha" required>
+                </div>
+                <div class="grupo-form" style="flex: 1;">
+                    <label>Hora de Inicio:</label>
+                    <input type="time" name="hora_inicio" required>
+                </div>
+                <div class="grupo-form" style="flex: 1;">
+                    <label>Hora de Fin:</label>
+                    <input type="time" name="hora_fin" required>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primario" style="margin-top: 1rem;">Guardar Sesión</button>
+        </form>
+    </div>
+</body>
+</html>

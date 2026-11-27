@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Error al Agendar</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
+</head>
+<body style="background-color: #fef2f2; display: flex; flex-direction: column; min-height: 100vh;">
+    <nav>
+        <h2>Sistema de Gestión Clínica</h2>
+        <div>
+            <!-- Solo el Admin (rol 1) ve el catálogo global -->
+            {% if session.get('usuario_rol') == 1 %}
+                <a href="{{ url_for('principal') }}">Inicio</a>
+                <a href="{{ url_for('pacientes') }}">Pacientes</a>
+                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
+                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
+            {% endif %}
+
+            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
+            {% if session.get('usuario_rol') == 2 %}
+                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
+            {% endif %}
+
+            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
+            <a href="{{ url_for('sesiones') }}">Agenda</a>
+            
+            <!-- Botón de Salir para todos -->
+            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
+        </div>
+    </nav>
+
+    <div style="flex: 1; display: flex; align-items: center; justify-content: center;">
+        <div class="contenedor" style="text-align: center; max-width: 600px; padding: 3rem 2rem; border-top: 5px solid #ef4444;">
+            
+            <h1 style="font-size: 4rem; margin-bottom: 0.5rem; color: #ef4444;">⚠️</h1>
+            <h2 style="color: #991b1b; font-size: 1.8rem; margin-bottom: 1rem;">No se pudo agendar la sesión</h2>
+            
+            <!-- Aquí imprimimos el mensaje exacto de la base de datos -->
+            <p style="font-size: 1.2rem; color: #b91c1c; font-weight: bold; margin-bottom: 1.5rem;">
+                {{ mensaje }}
+            </p>
+            
+            <p style="font-size: 1.1rem; color: #475569; margin-bottom: 2.5rem;">
+                Por favor, verifica el calendario e intenta seleccionar un horario o fecha que no esté ocupado por el terapeuta.
+            </p>
+            
+            <a href="{{ url_for('nuevaSesion') }}" class="btn btn-primario" style="background-color: #dc2626; padding: 0.8rem 2rem; font-size: 1.1rem;">
+                ← Regresar e intentar de nuevo
+            </a>
+
+        </div>
+    </div>
+</body>
+</html>

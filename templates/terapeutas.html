@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Terapeutas Registrados</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
+</head>
+<body>
+    <nav>
+        <h2>Sistema de Gestión Clínica</h2>
+        <div>
+            <!-- Solo el Admin (rol 1) ve el catálogo global -->
+            {% if session.get('usuario_rol') == 1 %}
+                <a href="{{ url_for('principal') }}">Inicio</a>
+                <a href="{{ url_for('pacientes') }}">Pacientes</a>
+                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
+                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
+            {% endif %}
+
+            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
+            {% if session.get('usuario_rol') == 2 %}
+                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
+            {% endif %}
+
+            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
+            <a href="{{ url_for('sesiones') }}">Agenda</a>
+            
+            <!-- Botón de Salir para todos -->
+            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
+        </div>
+    </nav>
+
+    <div class="contenedor">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1>Directorio de Terapeutas Activos</h1>
+            <a href="{{ url_for('insertarTerapeuta') }}" class="btn btn-primario">+ Nuevo Terapeuta</a>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Nombre</th>
+                    <th>Apellido Paterno</th>
+                    <th>Apellido Materno</th>
+                    <th>Cédula Profesional</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in Terapeutas %}
+                <tr>
+                    <td>{{ t[0] }}</td>
+                    <td>{{ t[1] }}</td>
+                    <td>{{ t[2] }}</td>
+                    <td>{{ t[3] or '' }}</td>
+                    <td>{{ t[4] }}</td>
+                    <td style="display: flex; gap: 0.5rem;">
+                        <a href="{{ url_for('editarTerapeuta', id_terapeuta=t[0]) }}" class="btn btn-editar">Editar</a>
+                        <form action="{{ url_for('borrarTerapeuta', id_terapeuta=t[0]) }}" method="POST" style="display:inline;">
+                            <button type="submit" class="btn btn-borrar" onclick="return confirm('¿Dar de baja a este terapeuta?');">Baja</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

@@ -1,0 +1,35 @@
+# Variables de entorno y secretos (NUNCA versionar)
+.env
+.env.local
+.env.*.local
+
+# Entornos virtuales de Python
+.venv/
+venv/
+ENV/
+env/
+
+# Cachés y compilados de Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Salidas generadas por ETL y reportes locales
+etl/output/*
+!etl/output/.gitkeep
+
+# Empaquetados de entrega y respaldos temporales
+*.zip
+*.tar.gz
+*.bak
+*.tmp
+*.log
+
+# Sistema operativo / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

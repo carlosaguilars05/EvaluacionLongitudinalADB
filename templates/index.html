@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Inicio - Gestión Clínica</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
+    <style>
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        .tarjeta-metrica {
+            background-color: #ffffff;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            border-top: 5px solid #1e40af;
+        }
+        .tarjeta-metrica h3 {
+            margin: 0;
+            color: #475569;
+            font-size: 1.2rem;
+            font-weight: normal;
+        }
+        .tarjeta-metrica .numero {
+            font-size: 3.5rem;
+            font-weight: bold;
+            color: #1e3a8a;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body style="background-color: #f1f5f9; min-height: 100vh; margin: 0;">
+    
+    <!-- Asegúrate de que este nav sea tu menú completo con las 6 opciones -->
+    <nav>
+        <h2>Sistema de Gestión Clínica</h2>
+        <div>
+            <!-- Solo el Admin (rol 1) ve el catálogo global -->
+            {% if session.get('usuario_rol') == 1 %}
+                <a href="{{ url_for('principal') }}">Inicio</a>
+                <a href="{{ url_for('pacientes') }}">Pacientes</a>
+                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
+                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
+            {% endif %}
+
+            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
+            {% if session.get('usuario_rol') == 2 %}
+                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
+            {% endif %}
+
+            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
+            <a href="{{ url_for('sesiones') }}">Agenda</a>
+            
+            <!-- Botón de Salir para todos -->
+            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
+        </div>
+    </nav>
+
+    <div class="contenedor" style="padding: 2rem; max-width: 1000px; margin: 2rem auto;">
+        <!-- Usamos el correo guardado en la sesión para dar la bienvenida -->
+        <h1 style="color: #1e40af; margin-bottom: 0;">Bienvenido, {{ session.get('usuario_correo') }}</h1>
+        <p style="color: #64748b; font-size: 1.1rem; margin-top: 0.5rem;">Aquí está el resumen general de la clínica al día de hoy.</p>
+
+        <div class="dashboard-grid">
+            <div class="tarjeta-metrica">
+                <h3>Total Pacientes</h3>
+                <div class="numero">{{ metricas.pacientes }}</div>
+            </div>
+            
+            <div class="tarjeta-metrica">
+                <h3>Total Terapeutas</h3>
+                <div class="numero">{{ metricas.terapeutas }}</div>
+            </div>
+            
+            <div class="tarjeta-metrica">
+                <h3>Asignaciones Activas</h3>
+                <div class="numero">{{ metricas.asignaciones }}</div>
+            </div>
+            
+            <div class="tarjeta-metrica" style="border-top-color: #10b981;">
+                <h3>Citas para Hoy</h3>
+                <div class="numero" style="color: #047857;">{{ metricas.citas_hoy }}</div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

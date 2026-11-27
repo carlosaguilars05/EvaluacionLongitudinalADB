@@ -1,0 +1,114 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background-color: #f4f7f9;
+    color: #333;
+}
+
+nav {
+    background-color: #1e3a8a;
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: white;
+}
+
+nav a {
+    color: white;
+    text-decoration: none;
+    margin-left: 1.5rem;
+    font-weight: 500;
+}
+
+nav a:hover {
+    text-decoration: underline;
+}
+
+.contenedor {
+    max-width: 1100px;
+    margin: 2rem auto;
+    padding: 1.5rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.tarjetas {
+    display: flex;
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.tarjeta {
+    flex: 1;
+    background: #eff6ff;
+    border-left: 5px solid #2563eb;
+    padding: 1.5rem;
+    border-radius: 6px;
+}
+
+.tarjeta h3 {
+    font-size: 0.95rem;
+    color: #1e40af;
+    margin-bottom: 0.5rem;
+}
+
+.tarjeta p {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #1e3a8a;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1.5rem;
+}
+
+th, td {
+    padding: 0.85rem;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+th {
+    background-color: #f8fafc;
+    color: #475569;
+}
+
+.btn {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 0.9rem;
+    cursor: pointer;
+    border: none;
+}
+
+.btn-primario { background-color: #2563eb; color: white; }
+.btn-editar { background-color: #f59e0b; color: white; }
+.btn-borrar { background-color: #ef4444; color: white; }
+
+.grupo-form {
+    margin-bottom: 1rem;
+}
+
+.grupo-form label {
+    display: block;
+    margin-bottom: 0.4rem;
+    font-weight: 600;
+}
+
+.grupo-form input, .grupo-form select {
+    width: 100%;
+    padding: 0.6rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+}
