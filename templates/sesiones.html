@@ -53,11 +53,17 @@
                         {% endif %}
                     </td>
                     {% if rol in (1, 2) %}
-                    <td>
+                    <td style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
+                        {% if rol == 2 and s[5] != 'Cancelada' %}
+                            <a href="{{ url_for('consulta_sesion', id_sesion=s[0]) }}" class="btn btn-primario">
+                                {% if s[5] == 'Completada' %}Ver / Editar SOAP{% else %}Consulta / SOAP{% endif %}
+                            </a>
+                        {% endif %}
                         {% if s[5] == 'Programada' %}
-                        <form action="{{ url_for('cancelar_sesion', id_sesion=s[0]) }}" method="POST" style="display:inline;">
-                            <button type="submit" class="btn btn-borrar" onclick="return confirm('¿Estás seguro de cancelar esta sesión?');">Cancelar</button>
-                        </form>
+                            <a href="{{ url_for('reprogramar_sesion', id_sesion=s[0]) }}" class="btn btn-editar">Reprogramar</a>
+                            <form action="{{ url_for('cancelar_sesion', id_sesion=s[0]) }}" method="POST" style="display:inline;">
+                                <button type="submit" class="btn btn-borrar" onclick="return confirm('¿Estás seguro de cancelar esta sesión?');">Cancelar</button>
+                            </form>
                         {% endif %}
                     </td>
                     {% endif %}

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Cuestionarios Psicométricos - Gestión Clínica{% endblock %}
+
+{% block content %}
+{% set rol = session.get('usuario_rol') %}
+<div class="contenedor">
+    <h1>{% if rol == 2 %}Cuestionarios Psicométricos Asignados{% else %}Mis Cuestionarios Psicométricos{% endif %}</h1>
+    <p class="subtitulo-fuente">
+        Plantillas dinámicas y respuestas almacenadas en <strong>MongoDB Atlas</strong> (<code>cuestionarios_instrumentos</code>)
+        y puntuaciones longitudinales en <strong>PostgreSQL</strong> (disparan alerta automática si la dimensión es >= 15).
+    </p>
+
+    {% if rol == 2 %}
+    <div class="tarjeta-clinica">
+        <h2 style="color: #1e3a8a; font-size: 1.1rem; margin-bottom: 0.85rem;">+ Asignar Cuestionario a un Paciente</h2>
+        <form action="{{ url_for('asignar_instrumento') }}" method="POST">
+            <div class="fila-form">
+                <div class="grupo-form">
+                    <label for="id_paciente">Paciente:</label>
+                    <select id="id_paciente" name="id_paciente" required>
+                        <option value="" disabled selected>-- Selecciona uno de tus pacientes --</option>
+                        {% for p in MisPacientes %}
+                            <option value="{{ p[0] }}">{{ p[1] }} {{ p[2] }} {{ p[3] or '' }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="grupo-form">
+                    <label for="id_instrumento">Instrumento Psicométrico Simulado:</label>
+                    <select id="id_instrumento" name="id_instrumento" required>
+                        <option value="" disabled selected>-- Selecciona un instrumento --</option>
+                        {% for inst in Instrumentos %}
+                            <option value="{{ inst[0] }}">{{ inst[1] }} ({{ inst[3] }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="grupo-form" style="max-width: 210px; display: flex; align-items: flex-end;">
+                    <button type="submit" class="btn btn-primario" style="width: 100%;">Asignar Cuestionario</button>
+                </div>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="tabla-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Instrumento</th>
+                    <th>Paciente</th>
+                    <th>Terapeuta</th>
+                    <th>Asignación</th>
+                    <th>Respuesta</th>
+                    <th>Estado</th>
+                    <th>Acción</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in Aplicaciones %}
+                <tr>
+                    <td>#{{ a[0] }}</td>
+                    <td style="font-weight: 600; color: #1e3a8a;">{{ a[2] }}</td>
+                    <td>{{ a[4] }}</td>
+                    <td>{{ a[5] }}</td>
+                    <td>{{ a[6].strftime('%Y-%m-%d') if a[6] else '' }}</td>
+                    <td>{{ a[7].strftime('%Y-%m-%d') if a[7] else '—' }}</td>
+                    <td>
+                        <span class="badge {% if a[8] == 'Completada' %}badge-completada{% else %}badge-programada{% endif %}">
+                            {{ a[8] }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if rol == 3 and a[8] != 'Completada' %}
+                            <a href="{{ url_for('responder_instrumento', id_aplicacion=a[0]) }}" class="btn btn-primario">Responder</a>
+                        {% elif a[8] == 'Completada' %}
+                            <a href="{{ url_for('detalle_instrumento', id_aplicacion=a[0]) }}" class="btn btn-editar">Ver Resultado</a>
+                        {% else %}
+                            <span class="subtitulo-fuente">Esperando respuesta</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" style="text-align: center; color: #64748b; padding: 2rem;">No hay aplicaciones de cuestionarios registradas.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

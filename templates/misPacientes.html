@@ -15,6 +15,7 @@
                     <th>Fecha de Nacimiento</th>
                     <th>Sexo</th>
                     <th>Teléfono</th>
+                    <th>Seguimiento Clínico</th>
                 </tr>
             </thead>
             <tbody>
@@ -25,10 +26,15 @@
                     <td>{{ paciente[4] }}</td>
                     <td>{{ paciente[5] or 'No especificado' }}</td>
                     <td>{{ paciente[6] or 'Sin registro' }}</td>
+                    <td style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
+                        <a href="{{ url_for('bitacoras_paciente', id_paciente=paciente[0]) }}" class="btn btn-primario">Bitácora</a>
+                        <a href="{{ url_for('planes') }}" class="btn btn-editar">Planes</a>
+                        <a href="{{ url_for('instrumentos') }}" class="btn" style="background-color: #0ea5e9; color: white;">Cuestionarios</a>
+                    </td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="5" style="padding: 2rem; text-align: center; color: #64748b;">Aún no tienes pacientes asignados en el sistema.</td>
+                    <td colspan="6" style="padding: 2rem; text-align: center; color: #64748b;">Aún no tienes pacientes asignados en el sistema.</td>
                 </tr>
                 {% endfor %}
             </tbody>

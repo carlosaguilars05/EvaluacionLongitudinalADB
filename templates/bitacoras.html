@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Bitácora Emocional - Gestión Clínica{% endblock %}
+
+{% block content %}
+<div class="contenedor">
+    <div class="encabezado-seccion">
+        <div>
+            <h1>{% if puede_crear %}Mi Bitácora Emocional{% else %}Bitácora Emocional — {{ nombre_paciente }}{% endif %}</h1>
+            <p class="subtitulo-fuente">
+                Contenido clínico confidencial almacenado en <strong>MongoDB Atlas</strong> (<code>bitacoras_emocionales</code>)
+                y referenciado en PostgreSQL (<code>referencia_bitacora</code>). Solo visible para el paciente y su terapeuta asignado.
+            </p>
+        </div>
+        {% if not puede_crear %}
+            <a href="{{ url_for('mis_pacientes') }}" class="btn btn-secundario">← Volver a Mis Pacientes</a>
+        {% endif %}
+    </div>
+
+    {% if puede_crear %}
+    <div class="tarjeta-clinica" style="border-left-color: #10b981;">
+        <h2 style="color: #065f46; font-size: 1.15rem; margin-bottom: 0.9rem;">+ Registrar Nueva Entrada Emocional</h2>
+        <form action="{{ url_for('nueva_bitacora') }}" method="POST">
+            <div class="fila-form">
+                <div class="grupo-form">
+                    <label for="estado_animo">Estado de Ánimo Principal:</label>
+                    <select id="estado_animo" name="estado_animo" required>
+                        <option value="Tranquilo">Tranquilo</option>
+                        <option value="Motivado">Motivado</option>
+                        <option value="Neutral">Neutral</option>
+                        <option value="Ansioso">Ansioso</option>
+                        <option value="Estresado">Estresado</option>
+                        <option value="Triste">Triste</option>
+                        <option value="Cansado">Cansado</option>
+                        <option value="Irritable">Irritable</option>
+                    </select>
+                </div>
+                <div class="grupo-form">
+                    <label for="intensidad">Intensidad Emocional (1 = baja, 10 = muy alta):</label>
+                    <input id="intensidad" type="number" name="intensidad" min="1" max="10" value="5" required>
+                </div>
+                <div class="grupo-form">
+                    <label for="energia">Nivel de Energía (1–10):</label>
+                    <input id="energia" type="number" name="energia" min="1" max="10" value="6" required>
+                </div>
+                <div class="grupo-form">
+                    <label for="sueno_horas">Horas de Sueño:</label>
+                    <input id="sueno_horas" type="number" name="sueno_horas" min="0" max="24" step="0.5" value="7.0" required>
+                </div>
+            </div>
+
+            <div class="fila-form">
+                <div class="grupo-form">
+                    <label for="detonantes">Detonantes (separados por coma):</label>
+                    <input id="detonantes" type="text" name="detonantes" placeholder="Ej. Carga laboral, falta de descanso">
+                </div>
+                <div class="grupo-form">
+                    <label for="estrategias_usadas">Estrategias de Afrontamiento Utilizadas (separadas por coma):</label>
+                    <input id="estrategias_usadas" type="text" name="estrategias_usadas" placeholder="Ej. Respiración 4-7-8, caminata">
+                </div>
+            </div>
+
+            <div class="grupo-form">
+                <label for="pensamientos">Pensamientos Predominantes:</label>
+                <textarea id="pensamientos" name="pensamientos" rows="2" placeholder="¿Qué pensamientos acompañaron tu estado de ánimo hoy?"></textarea>
+            </div>
+
+            <div class="grupo-form">
+                <label for="notas_libres">Notas Libres / Reflexión:</label>
+                <textarea id="notas_libres" name="notas_libres" rows="2" placeholder="Comparte cualquier detalle útil para revisar en tu próxima sesión..."></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primario">Guardar en Mi Bitácora</button>
+        </form>
+    </div>
+    {% endif %}
+
+    <h2 style="color: #1e3a8a; font-size: 1.2rem; margin-top: 1.75rem;">
+        Historial de Registros ({{ entradas|length }})
+    </h2>
+
+    {% for e in entradas %}
+    <div class="tarjeta-clinica">
+        <div class="encabezado-seccion">
+            <div>
+                <span class="badge {% if e.get('intensidad', 5) >= 8 %}badge-cancelada{% elif e.get('intensidad', 5) <= 4 %}badge-completada{% else %}badge-programada{% endif %}">
+                    {{ e.get('estado_animo', 'Neutral') }}
+                </span>
+                <strong style="margin-left: 0.5rem; color: #1e3a8a;">
+                    Intensidad: {{ e.get('intensidad', 5) }}/10 | Energía: {{ e.get('energia', 5) }}/10 | Sueño: {{ e.get('sueno_horas', 7) }} h
+                </strong>
+            </div>
+            <span class="subtitulo-fuente">
+                {{ e.get('fecha_registro').strftime('%Y-%m-%d %H:%M UTC') if e.get('fecha_registro') else '' }}
+            </span>
+        </div>
+
+        {% if e.get('pensamientos') %}
+            <p style="margin-top: 0.6rem;"><strong>Pensamientos:</strong> {{ e.get('pensamientos') }}</p>
+        {% endif %}
+        {% if e.get('notas_libres') %}
+            <p style="margin-top: 0.35rem; color: #334155;"><strong>Notas:</strong> {{ e.get('notas_libres') }}</p>
+        {% endif %}
+
+        <div style="margin-top: 0.5rem;">
+            {% for d in e.get('detonantes', []) %}
+                <span class="etiqueta-chip" style="background-color: #fee2e2; color: #991b1b;">Detonante: {{ d }}</span>
+            {% endfor %}
+            {% for s in e.get('estrategias_usadas', []) %}
+                <span class="etiqueta-chip" style="background-color: #dcfce7; color: #166534;">Estrategia: {{ s }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <p class="subtitulo-fuente" style="margin-top: 1rem;">Aún no hay entradas registradas en esta bitácora emocional.</p>
+    {% endfor %}
+</div>
+{% endblock %}

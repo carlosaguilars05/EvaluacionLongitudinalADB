@@ -23,6 +23,15 @@
 
             <a href="{{ url_for('sesiones') }}">Agenda</a>
 
+            {% if rol == 2 %}
+                <a href="{{ url_for('planes') }}">Planes</a>
+                <a href="{{ url_for('instrumentos') }}">Cuestionarios</a>
+            {% elif rol == 3 %}
+                <a href="{{ url_for('bitacoras') }}">Mi Bitácora</a>
+                <a href="{{ url_for('instrumentos') }}">Cuestionarios</a>
+                <a href="{{ url_for('planes') }}">Mis Planes</a>
+            {% endif %}
+
             {% if rol in (1, 2) %}
                 <a href="{{ url_for('alertas') }}">Alertas</a>
                 <a href="{{ url_for('reportes') }}">Reportes</a>

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Tg0DLH3DGva8wdeFz07Q67VuhT05fkPVhOMoeyv9GLjikf7fwfEW3UgREknPwfn
+\restrict b0RyQd5Rs0NqKZJdXX8PgD8brGZijFtT3qV890peIAI8IlYODHWMoI64Ft7T35v
 
 -- Dumped from database version 17.12
 -- Dumped by pg_dump version 17.12
@@ -345,6 +345,43 @@ $$;
 ALTER PROCEDURE public.sp_agendar_sesion(IN p_id_asignacion integer, IN p_id_modalidad integer, IN p_fecha date, IN p_hora_inicio time without time zone, IN p_hora_fin time without time zone, OUT p_id_nueva_sesion integer, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
+-- Name: sp_asignar_instrumento(integer, integer, integer); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_asignar_instrumento(IN p_id_instrumento integer, IN p_id_paciente integer, IN p_id_terapeuta integer, OUT p_id_aplicacion integer, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_asignado integer;
+BEGIN
+    SELECT COUNT(*) INTO v_asignado
+    FROM public.asignacion_terapeuta_paciente
+    WHERE id_paciente = p_id_paciente
+      AND id_terapeuta = p_id_terapeuta
+      AND id_estado_asignacion = 1;
+
+    IF v_asignado = 0 THEN
+        p_id_aplicacion := NULL;
+        p_mensaje := 'Acceso denegado: solo puedes asignar instrumentos a tus pacientes vigentes.';
+        RETURN;
+    END IF;
+
+    INSERT INTO public.aplicacion_instrumento (id_instrumento, id_paciente, id_terapeuta, estado)
+    VALUES (p_id_instrumento, p_id_paciente, p_id_terapeuta, 'Pendiente')
+    RETURNING id_aplicacion INTO p_id_aplicacion;
+
+    p_mensaje := 'Cuestionario asignado correctamente al paciente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_id_aplicacion := NULL;
+        p_mensaje := 'Error al asignar instrumento: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_asignar_instrumento(IN p_id_instrumento integer, IN p_id_paciente integer, IN p_id_terapeuta integer, OUT p_id_aplicacion integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
 -- Name: sp_asignar_terapeuta_paciente(integer, integer, integer); Type: PROCEDURE; Schema: public; Owner: usuario
 --
 
@@ -551,6 +588,47 @@ $$;
 
 
 ALTER PROCEDURE public.sp_consultar_alertas_activas(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_consultar_aplicaciones_instrumentos(integer, integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_aplicaciones_instrumentos(IN p_id_terapeuta integer, IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT
+            ai.id_aplicacion,
+            ai.id_instrumento,
+            i.nombre AS instrumento,
+            ai.id_paciente,
+            p.nombre || ' ' || p.apellido_paterno AS paciente,
+            t.nombre || ' ' || t.apellido_paterno AS terapeuta,
+            ai.fecha_asignacion,
+            ai.fecha_respuesta,
+            COALESCE(ai.estado, 'Pendiente') AS estado,
+            ai.id_documento_mongo
+        FROM public.aplicacion_instrumento ai
+        JOIN public.instrumento i ON ai.id_instrumento = i.id_instrumento
+        JOIN public.paciente p ON ai.id_paciente = p.id_paciente
+        JOIN public.terapeuta t ON ai.id_terapeuta = t.id_terapeuta
+        WHERE (p_id_terapeuta IS NULL OR ai.id_terapeuta = p_id_terapeuta)
+          AND (p_id_paciente IS NULL OR ai.id_paciente = p_id_paciente)
+        ORDER BY
+            CASE WHEN COALESCE(ai.estado, 'Pendiente') = 'Pendiente' THEN 0 ELSE 1 END,
+            ai.fecha_asignacion DESC,
+            ai.id_aplicacion DESC;
+
+    p_mensaje := 'Aplicaciones de instrumentos recuperadas.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar aplicaciones: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_aplicaciones_instrumentos(IN p_id_terapeuta integer, IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_consultar_asignaciones_terapeuta(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -782,6 +860,50 @@ $$;
 ALTER PROCEDURE public.sp_consultar_mis_pacientes(IN p_id_terapeuta integer, INOUT p_cursor refcursor) OWNER TO usuario;
 
 --
+-- Name: sp_consultar_objetivos_de_plan(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_objetivos_de_plan(IN p_id_plan integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        WITH ultimo_hist AS (
+            SELECT DISTINCT ON (id_objetivo)
+                id_objetivo,
+                porcentaje_avance_registrado,
+                fecha_registro,
+                comentario
+            FROM public.historial_objetivo
+            ORDER BY id_objetivo, fecha_registro DESC, id_historial DESC
+        )
+        SELECT
+            o.id_objetivo,
+            o.nombre,
+            COALESCE(o.descripcion, '') AS descripcion,
+            eo.nombre AS estado_objetivo,
+            o.fecha_inicio,
+            o.fecha_meta,
+            COALESCE(uh.porcentaje_avance_registrado, 0.00) AS ultimo_porcentaje,
+            uh.fecha_registro AS ultima_fecha,
+            COALESCE(uh.comentario, 'Sin avances registrados aún') AS ultimo_comentario
+        FROM public.objetivo o
+        JOIN public.estado_objetivo eo ON o.id_estado_objetivo = eo.id_estado_objetivo
+        LEFT JOIN ultimo_hist uh ON o.id_objetivo = uh.id_objetivo
+        WHERE o.id_plan = p_id_plan
+        ORDER BY o.id_estado_objetivo ASC, o.id_objetivo ASC;
+
+    p_mensaje := 'Objetivos del plan recuperados correctamente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar objetivos del plan: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_objetivos_de_plan(IN p_id_plan integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
 -- Name: sp_consultar_paciente_usuario(integer); Type: PROCEDURE; Schema: public; Owner: usuario
 --
 
@@ -820,6 +942,49 @@ $$;
 
 
 ALTER PROCEDURE public.sp_consultar_pacientes(IN p_id_estado integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_consultar_planes_terapeuticos(integer, integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_planes_terapeuticos(IN p_id_terapeuta integer, IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT
+            pt.id_plan,
+            pt.id_asignacion,
+            a.id_paciente,
+            p.nombre || ' ' || p.apellido_paterno AS paciente,
+            t.nombre || ' ' || t.apellido_paterno AS terapeuta,
+            ep.nombre AS estado_plan,
+            pt.fecha_inicio,
+            pt.fecha_fin,
+            COALESCE(pt.descripcion_general, '') AS descripcion_general,
+            COUNT(o.id_objetivo) AS total_objetivos,
+            COUNT(CASE WHEN o.id_estado_objetivo = 2 THEN 1 END) AS logrados
+        FROM public.plan_terapeutico pt
+        JOIN public.estado_plan ep ON pt.id_estado_plan = ep.id_estado_plan
+        JOIN public.asignacion_terapeuta_paciente a ON pt.id_asignacion = a.id_asignacion
+        JOIN public.paciente p ON a.id_paciente = p.id_paciente
+        JOIN public.terapeuta t ON a.id_terapeuta = t.id_terapeuta
+        LEFT JOIN public.objetivo o ON pt.id_plan = o.id_plan
+        WHERE (p_id_terapeuta IS NULL OR a.id_terapeuta = p_id_terapeuta)
+          AND (p_id_paciente IS NULL OR a.id_paciente = p_id_paciente)
+        GROUP BY pt.id_plan, pt.id_asignacion, a.id_paciente, p.nombre, p.apellido_paterno,
+                 t.nombre, t.apellido_paterno, ep.nombre, pt.fecha_inicio, pt.fecha_fin, pt.descripcion_general
+        ORDER BY pt.id_estado_plan ASC, pt.fecha_inicio DESC, pt.id_plan DESC;
+
+    p_mensaje := 'Planes terapéuticos recuperados correctamente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar planes terapéuticos: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_planes_terapeuticos(IN p_id_terapeuta integer, IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_consultar_progreso_clinico(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -990,6 +1155,57 @@ $$;
 ALTER PROCEDURE public.sp_consultar_usuario_login(IN p_correo character varying, OUT p_id_usuario integer, OUT p_id_rol integer, OUT p_password character varying, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
+-- Name: sp_crear_objetivo(integer, character varying, text, date, date); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_crear_objetivo(IN p_id_plan integer, IN p_nombre character varying, IN p_descripcion text, IN p_fecha_inicio date, IN p_fecha_meta date, OUT p_id_objetivo integer, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO public.objetivo (id_plan, id_estado_objetivo, nombre, descripcion, fecha_inicio, fecha_meta)
+    VALUES (p_id_plan, 1, p_nombre, p_descripcion, COALESCE(p_fecha_inicio, CURRENT_DATE), p_fecha_meta)
+    RETURNING id_objetivo INTO p_id_objetivo;
+
+    -- Si el plan estaba completado, al agregar un objetivo pendiente vuelve a Activo
+    UPDATE public.plan_terapeutico
+    SET id_estado_plan = 1, fecha_fin = NULL
+    WHERE id_plan = p_id_plan AND id_estado_plan = 2;
+
+    p_mensaje := 'Objetivo terapéutico agregado correctamente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_id_objetivo := NULL;
+        p_mensaje := 'Error al crear objetivo: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_crear_objetivo(IN p_id_plan integer, IN p_nombre character varying, IN p_descripcion text, IN p_fecha_inicio date, IN p_fecha_meta date, OUT p_id_objetivo integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_crear_plan_terapeutico(integer, date, text); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_crear_plan_terapeutico(IN p_id_asignacion integer, IN p_fecha_inicio date, IN p_descripcion text, OUT p_id_plan integer, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO public.plan_terapeutico (id_asignacion, id_estado_plan, fecha_inicio, descripcion_general)
+    VALUES (p_id_asignacion, 1, COALESCE(p_fecha_inicio, CURRENT_DATE), p_descripcion)
+    RETURNING id_plan INTO p_id_plan;
+
+    p_mensaje := 'Plan terapéutico creado exitosamente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_id_plan := NULL;
+        p_mensaje := 'Error al crear plan terapéutico: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_crear_plan_terapeutico(IN p_id_asignacion integer, IN p_fecha_inicio date, IN p_descripcion text, OUT p_id_plan integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
 -- Name: sp_dar_baja_paciente(integer); Type: PROCEDURE; Schema: public; Owner: usuario
 --
 
@@ -1113,6 +1329,30 @@ $$;
 
 
 ALTER PROCEDURE public.sp_listar_aplicaciones_seed_mongo(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_listar_instrumentos_activos(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_listar_instrumentos_activos(INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT id_instrumento, nombre, COALESCE(descripcion, ''), COALESCE(version, 'v1.0')
+        FROM public.instrumento
+        WHERE COALESCE(estado, 'Activo') = 'Activo'
+        ORDER BY id_instrumento ASC;
+
+    p_mensaje := 'Instrumentos activos recuperados.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al listar instrumentos: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_listar_instrumentos_activos(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_listar_pacientes_sin_asignar(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -1288,6 +1528,117 @@ $$;
 ALTER PROCEDURE public.sp_listar_usuarios_para_migracion(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
+-- Name: sp_obtener_aplicacion_detalle(integer, integer, integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_obtener_aplicacion_detalle(IN p_id_aplicacion integer, IN p_id_terapeuta integer, IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_autorizado boolean, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_existe integer;
+BEGIN
+    SELECT COUNT(*) INTO v_existe
+    FROM public.aplicacion_instrumento ai
+    WHERE ai.id_aplicacion = p_id_aplicacion
+      AND (p_id_terapeuta IS NULL OR ai.id_terapeuta = p_id_terapeuta)
+      AND (p_id_paciente IS NULL OR ai.id_paciente = p_id_paciente);
+
+    IF v_existe = 0 THEN
+        p_autorizado := FALSE;
+        p_mensaje := 'Acceso denegado o aplicación no encontrada.';
+        OPEN p_cursor FOR SELECT NULL::integer WHERE FALSE;
+        RETURN;
+    END IF;
+
+    p_autorizado := TRUE;
+    OPEN p_cursor FOR
+        SELECT
+            ai.id_aplicacion,
+            ai.id_instrumento,
+            i.nombre AS instrumento,
+            ai.id_paciente,
+            p.nombre || ' ' || p.apellido_paterno AS paciente,
+            ai.id_terapeuta,
+            t.nombre || ' ' || t.apellido_paterno AS terapeuta,
+            COALESCE(ai.estado, 'Pendiente') AS estado,
+            ai.id_documento_mongo,
+            ai.fecha_asignacion,
+            ai.fecha_respuesta
+        FROM public.aplicacion_instrumento ai
+        JOIN public.instrumento i ON ai.id_instrumento = i.id_instrumento
+        JOIN public.paciente p ON ai.id_paciente = p.id_paciente
+        JOIN public.terapeuta t ON ai.id_terapeuta = t.id_terapeuta
+        WHERE ai.id_aplicacion = p_id_aplicacion;
+
+    p_mensaje := 'Detalle de aplicación recuperado.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_autorizado := FALSE;
+        p_mensaje := 'Error al consultar aplicación: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_obtener_aplicacion_detalle(IN p_id_aplicacion integer, IN p_id_terapeuta integer, IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_autorizado boolean, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_obtener_detalle_sesion(integer, integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_obtener_detalle_sesion(IN p_id_sesion integer, IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_autorizado boolean, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_existe integer;
+BEGIN
+    SELECT COUNT(*) INTO v_existe
+    FROM public.sesion s
+    JOIN public.asignacion_terapeuta_paciente a ON s.id_asignacion = a.id_asignacion
+    WHERE s.id_sesion = p_id_sesion
+      AND (p_id_terapeuta IS NULL OR a.id_terapeuta = p_id_terapeuta);
+
+    IF v_existe = 0 THEN
+        p_autorizado := FALSE;
+        p_mensaje := 'Acceso denegado o sesión no encontrada.';
+        OPEN p_cursor FOR SELECT NULL::integer WHERE FALSE;
+        RETURN;
+    END IF;
+
+    p_autorizado := TRUE;
+    OPEN p_cursor FOR
+        SELECT
+            s.id_sesion,
+            s.fecha,
+            s.hora_inicio,
+            s.hora_fin,
+            m.nombre AS modalidad,
+            es.nombre AS estado_sesion,
+            a.id_paciente,
+            p.nombre || ' ' || p.apellido_paterno AS paciente,
+            a.id_terapeuta,
+            t.nombre || ' ' || t.apellido_paterno AS terapeuta,
+            rr.id_documento_mongo
+        FROM public.sesion s
+        JOIN public.modalidad_sesion m ON s.id_modalidad = m.id_modalidad
+        JOIN public.estado_sesion es ON s.id_estado_sesion = es.id_estado_sesion
+        JOIN public.asignacion_terapeuta_paciente a ON s.id_asignacion = a.id_asignacion
+        JOIN public.paciente p ON a.id_paciente = p.id_paciente
+        JOIN public.terapeuta t ON a.id_terapeuta = t.id_terapeuta
+        LEFT JOIN public.referencia_resumen rr ON s.id_sesion = rr.id_sesion
+        WHERE s.id_sesion = p_id_sesion;
+
+    p_mensaje := 'Detalle de sesión recuperado.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_autorizado := FALSE;
+        p_mensaje := 'Error al consultar detalle de sesión: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_obtener_detalle_sesion(IN p_id_sesion integer, IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_autorizado boolean, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
 -- Name: sp_obtener_modalidades(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
 --
 
@@ -1324,6 +1675,60 @@ $$;
 
 
 ALTER PROCEDURE public.sp_obtener_paciente_por_id(IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_obtener_plan_detalle(integer, integer, integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_obtener_plan_detalle(IN p_id_plan integer, IN p_id_terapeuta integer, IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_autorizado boolean, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_existe integer;
+BEGIN
+    SELECT COUNT(*) INTO v_existe
+    FROM public.plan_terapeutico pt
+    JOIN public.asignacion_terapeuta_paciente a ON pt.id_asignacion = a.id_asignacion
+    WHERE pt.id_plan = p_id_plan
+      AND (p_id_terapeuta IS NULL OR a.id_terapeuta = p_id_terapeuta)
+      AND (p_id_paciente IS NULL OR a.id_paciente = p_id_paciente);
+
+    IF v_existe = 0 THEN
+        p_autorizado := FALSE;
+        p_mensaje := 'Acceso denegado o plan terapéutico no encontrado.';
+        OPEN p_cursor FOR SELECT NULL::integer WHERE FALSE;
+        RETURN;
+    END IF;
+
+    p_autorizado := TRUE;
+    OPEN p_cursor FOR
+        SELECT
+            pt.id_plan,
+            pt.id_asignacion,
+            a.id_paciente,
+            p.nombre || ' ' || p.apellido_paterno AS paciente,
+            t.nombre || ' ' || t.apellido_paterno AS terapeuta,
+            ep.nombre AS estado_plan,
+            pt.fecha_inicio,
+            pt.fecha_fin,
+            COALESCE(pt.descripcion_general, '') AS descripcion_general
+        FROM public.plan_terapeutico pt
+        JOIN public.estado_plan ep ON pt.id_estado_plan = ep.id_estado_plan
+        JOIN public.asignacion_terapeuta_paciente a ON pt.id_asignacion = a.id_asignacion
+        JOIN public.paciente p ON a.id_paciente = p.id_paciente
+        JOIN public.terapeuta t ON a.id_terapeuta = t.id_terapeuta
+        WHERE pt.id_plan = p_id_plan;
+
+    p_mensaje := 'Detalle del plan recuperado.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_autorizado := FALSE;
+        p_mensaje := 'Error al consultar detalle del plan: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_obtener_plan_detalle(IN p_id_plan integer, IN p_id_terapeuta integer, IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_autorizado boolean, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_obtener_terapeuta_por_id(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -1544,6 +1949,29 @@ $$;
 
 
 ALTER PROCEDURE public.sp_registrar_referencia_resumen(IN p_id_sesion integer, IN p_id_documento_mongo character varying, OUT p_id_referencia integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_registrar_resultado_dimension(integer, integer, numeric); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_registrar_resultado_dimension(IN p_id_aplicacion integer, IN p_id_dimension integer, IN p_puntuacion numeric, OUT p_id_resultado integer, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO public.resultado_instrumento (id_aplicacion, id_dimension, puntuacion_bruta)
+    VALUES (p_id_aplicacion, p_id_dimension, p_puntuacion)
+    RETURNING id_resultado INTO p_id_resultado;
+
+    p_mensaje := 'Resultado numérico registrado.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_id_resultado := NULL;
+        p_mensaje := 'Error al registrar resultado de dimensión: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_registrar_resultado_dimension(IN p_id_aplicacion integer, IN p_id_dimension integer, IN p_puntuacion numeric, OUT p_id_resultado integer, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_registrar_terapeuta(character varying, character varying, character varying, character varying, character varying, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -1938,6 +2366,77 @@ $$;
 
 
 ALTER PROCEDURE public.sp_validar_propiedad_asignacion(IN p_id_asignacion integer, IN p_id_terapeuta integer, OUT p_es_propietario boolean, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_validar_propiedad_objetivo(integer, integer); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_validar_propiedad_objetivo(IN p_id_objetivo integer, IN p_id_terapeuta integer, OUT p_autorizado boolean, OUT p_id_plan integer, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    SELECT o.id_plan INTO p_id_plan
+    FROM public.objetivo o
+    JOIN public.plan_terapeutico pt ON o.id_plan = pt.id_plan
+    JOIN public.asignacion_terapeuta_paciente a ON pt.id_asignacion = a.id_asignacion
+    WHERE o.id_objetivo = p_id_objetivo
+      AND a.id_terapeuta = p_id_terapeuta
+    LIMIT 1;
+
+    IF p_id_plan IS NOT NULL THEN
+        p_autorizado := TRUE;
+        p_mensaje := 'Objetivo autorizado para el terapeuta.';
+    ELSE
+        p_autorizado := FALSE;
+        p_mensaje := 'Acceso denegado: el objetivo no pertenece a tus pacientes asignados.';
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_autorizado := FALSE;
+        p_id_plan := NULL;
+        p_mensaje := 'Error al validar propiedad del objetivo: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_validar_propiedad_objetivo(IN p_id_objetivo integer, IN p_id_terapeuta integer, OUT p_autorizado boolean, OUT p_id_plan integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_validar_propiedad_paciente(integer, integer); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_validar_propiedad_paciente(IN p_id_paciente integer, IN p_id_terapeuta integer, OUT p_autorizado boolean, OUT p_nombre_paciente character varying, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    SELECT p.nombre || ' ' || p.apellido_paterno || ' ' || COALESCE(p.apellido_materno, '')
+    INTO p_nombre_paciente
+    FROM public.paciente p
+    JOIN public.asignacion_terapeuta_paciente a ON p.id_paciente = a.id_paciente
+    WHERE p.id_paciente = p_id_paciente
+      AND a.id_terapeuta = p_id_terapeuta
+      AND a.id_estado_asignacion = 1
+    LIMIT 1;
+
+    IF p_nombre_paciente IS NOT NULL THEN
+        p_autorizado := TRUE;
+        p_nombre_paciente := TRIM(p_nombre_paciente);
+        p_mensaje := 'Paciente autorizado para el terapeuta.';
+    ELSE
+        p_autorizado := FALSE;
+        p_nombre_paciente := NULL;
+        p_mensaje := 'Acceso denegado: este paciente no está asignado al terapeuta autenticado.';
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_autorizado := FALSE;
+        p_nombre_paciente := NULL;
+        p_mensaje := 'Error al validar propiedad del paciente: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_validar_propiedad_paciente(IN p_id_paciente integer, IN p_id_terapeuta integer, OUT p_autorizado boolean, OUT p_nombre_paciente character varying, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_validar_propiedad_sesion(integer, integer); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -3481,6 +3980,7 @@ COPY public.aplicacion_instrumento (id_aplicacion, id_instrumento, id_paciente, 
 14	2	29	11	2026-11-02 10:00:00	2026-11-02 18:30:00	Completada	6b08fb8e288aca219b1d1c88
 15	1	33	11	2026-10-20 11:00:00	2026-10-20 19:00:00	Completada	6b08fb8e288aca219b1d1c89
 16	1	33	11	2026-11-03 11:00:00	2026-11-03 19:15:00	Completada	6b08fb8e288aca219b1d1c8a
+17	2	33	11	2026-11-26 21:51:54.216281	\N	Pendiente	\N
 \.
 
 
@@ -4078,7 +4578,7 @@ COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_has
 11	2	1	terapeuta10@clinica.com	scrypt:32768:8:1$nXziezbpLltp91hT$038946bd69f533632f893d02036d108565d404967897d75436196834ad6a6107f15214a5c1a0cd104bb277e8adaf6e1ede2280ec30b6f928e1e4d4f8ede5c207	2026-10-17 19:55:18.010379	\N
 12	3	1	paciente1@correo.com	scrypt:32768:8:1$N32A2TxZzGOMBZlT$361faed09e0c6810cfd7fd231d3e97aca65c6800d337b6544d887bb617809a96355cc34884dcbb72a5f3416ca65c08a4bda4d2d65f01daf9bd688893e06dc34c	2026-10-17 19:55:18.010379	\N
 13	3	1	paciente2@correo.com	scrypt:32768:8:1$gPdkkEYKBCGB1F2v$23764701ea1403c171030b81d49a078e7ee146c6f8964b743a21db74ba437f0b2781b58b8807cf639c09a348d9c203f76ae9975defb546daaebea17af9ef9da9	2026-10-17 19:55:18.010379	\N
-1	1	1	admin@clinica.com	scrypt:32768:8:1$nJed2mU8SQdyNIlR$3359d818734171072be58ed9f13662d9b1533ca3b7482108386750bb4efc0c0df7e1f46e05c2a929be02e5aa83cb5de1d96d4f33411c1c94ad4b9fb2632957ad	2026-10-17 19:55:18.010379	2026-11-26 20:15:31.206015
+1	1	1	admin@clinica.com	scrypt:32768:8:1$nJed2mU8SQdyNIlR$3359d818734171072be58ed9f13662d9b1533ca3b7482108386750bb4efc0c0df7e1f46e05c2a929be02e5aa83cb5de1d96d4f33411c1c94ad4b9fb2632957ad	2026-10-17 19:55:18.010379	2026-11-26 21:51:51.720858
 14	3	1	paciente3@correo.com	scrypt:32768:8:1$a2TONRnNhItZaVat$59b23c4ebec173702da48b5a16df6f0db0cecafe4481b2307befbe88a6041d2c4f4d513b9aa4b565ae7d2367c9a34244f63d541ee1d0a0f1c55e0348f4e149cf	2026-10-17 19:55:18.010379	\N
 15	3	1	paciente4@correo.com	scrypt:32768:8:1$Ga5MpM7IKmywdJfy$74183073a89781c15261c6c704e7e20ea948b8e8ef88c587f1a8ea65742c924a9e17af013011fc463e7bc3e80cb38507dea71c1689dc2ff771af8bd140990ff6	2026-10-17 19:55:18.010379	\N
 16	3	1	paciente5@correo.com	scrypt:32768:8:1$jAvE001JM0bGF2XL$1e709a2e15506e666c4c48f4594a5e29664402c389aeee6e7f6744898deb64ef0241a1b6499598efdd879cca5bc6463fb984b97523a7324e6a7f6dbfc25d9e1c	2026-10-17 19:55:18.010379	\N
@@ -4113,8 +4613,8 @@ COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_has
 47	3	1	ce_aguilar@hotmail.com	scrypt:32768:8:1$z6clz8BuPzfmuhKd$c3d28d85331378f3664cf59bf0e21b61b990dc6e4d71bb8e1cbb8e77ed825b2bfdc984c8323b6fbb029a2d39e158bd991747b588bfb8ce5ec0d96f9b39344ac3	2026-10-18 03:08:25.882202	\N
 48	3	2	eduardo.aguilar@directlink.net.mx	scrypt:32768:8:1$28vHEWzqcAyOcrBt$cc8a44db8f8270c48167f57e9e9cf2a81927647e8a0f3402ef5dcbf14788674f08889faffdc6dbafacc9b7b10e2e41f9413959b736e5a377be559932e2d17220	2026-10-18 03:37:49.230778	\N
 52	3	2	email@gmail.com	scrypt:32768:8:1$F3qnbKPJ1rW0UlEH$947e6f947d9078a28a173628524762a19121466f6d1497c9743e3213b483b5869100e487d55f26a6d222df6b174a2d3236f7829ffd61b6eb96902e9c33981770	2026-10-22 14:41:28.265484	\N
-50	2	1	paola.terapeuta@clinica.com	scrypt:32768:8:1$CGMEvwdI30D4WPyb$abdd0cc43bcfbdcf9c63236f3a269b7fdf584aa10fff8f7a075e9d0ee04deef62752d102c6a8c0aa504d5ced279c3ef3e2cfb6c1661ad6b4ed1bbe9d8aae93e6	2026-10-18 22:07:13.917424	2026-11-26 20:08:48.330508
-51	3	1	carlos.paciente@clinica.com	scrypt:32768:8:1$pFvaN6CSan2V1Eg6$58c588d643ae437b3ea2be96c7740930127e9f4b87e5ae46f3b62349ea7abb2216cf86d5edbd6bf2e8f2a415d6ff84fe3d130c2ad2f63416e5f613f16b069766	2026-10-18 23:06:25.68	2026-11-26 20:08:48.940183
+50	2	1	paola.terapeuta@clinica.com	scrypt:32768:8:1$CGMEvwdI30D4WPyb$abdd0cc43bcfbdcf9c63236f3a269b7fdf584aa10fff8f7a075e9d0ee04deef62752d102c6a8c0aa504d5ced279c3ef3e2cfb6c1661ad6b4ed1bbe9d8aae93e6	2026-10-18 22:07:13.917424	2026-11-26 21:51:52.889605
+51	3	1	carlos.paciente@clinica.com	scrypt:32768:8:1$pFvaN6CSan2V1Eg6$58c588d643ae437b3ea2be96c7740930127e9f4b87e5ae46f3b62349ea7abb2216cf86d5edbd6bf2e8f2a415d6ff84fe3d130c2ad2f63416e5f613f16b069766	2026-10-18 23:06:25.68	2026-11-26 21:51:54.423414
 \.
 
 
@@ -4129,7 +4629,7 @@ SELECT pg_catalog.setval('public.alerta_id_alerta_seq', 11, true);
 -- Name: aplicacion_instrumento_id_aplicacion_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.aplicacion_instrumento_id_aplicacion_seq', 16, true);
+SELECT pg_catalog.setval('public.aplicacion_instrumento_id_aplicacion_seq', 17, true);
 
 
 --
@@ -4996,5 +5496,5 @@ ALTER TABLE ONLY public.usuario
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Tg0DLH3DGva8wdeFz07Q67VuhT05fkPVhOMoeyv9GLjikf7fwfEW3UgREknPwfn
+\unrestrict b0RyQd5Rs0NqKZJdXX8PgD8brGZijFtT3qV890peIAI8IlYODHWMoI64Ft7T35v
 

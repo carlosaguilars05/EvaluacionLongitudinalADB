@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Reprogramar Sesión #{{ sesion[0] }} - Gestión Clínica{% endblock %}
+
+{% block content %}
+<div class="contenedor" style="max-width: 720px;">
+    <h1>Reprogramar Sesión #{{ sesion[0] }}</h1>
+    <p class="subtitulo-fuente">
+        Paciente: <strong>{{ sesion[7] }}</strong> | Terapeuta: <strong>{{ sesion[9] }}</strong> | Modalidad: {{ sesion[4] }}
+    </p>
+
+    <form action="{{ url_for('reprogramar_sesion', id_sesion=sesion[0]) }}" method="POST" style="margin-top: 1.5rem;">
+        <div class="fila-form">
+            <div class="grupo-form">
+                <label for="fecha">Nueva Fecha:</label>
+                <input id="fecha" type="date" name="fecha" value="{{ sesion[1] }}" required>
+            </div>
+            <div class="grupo-form">
+                <label for="hora_inicio">Nueva Hora de Inicio:</label>
+                <input id="hora_inicio" type="time" name="hora_inicio" value="{{ sesion[2].strftime('%H:%M') if sesion[2] else '' }}" required>
+            </div>
+            <div class="grupo-form">
+                <label for="hora_fin">Nueva Hora de Fin:</label>
+                <input id="hora_fin" type="time" name="hora_fin" value="{{ sesion[3].strftime('%H:%M') if sesion[3] else '' }}" required>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primario">Guardar Nuevo Horario</button>
+        <a href="{{ url_for('sesiones') }}" class="btn btn-secundario" style="margin-left: 0.5rem;">Cancelar</a>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Resultado de {{ aplicacion[2] }} - Gestión Clínica{% endblock %}
+
+{% block content %}
+<div class="contenedor" style="max-width: 880px;">
+    <div class="encabezado-seccion">
+        <div>
+            <h1>Resultado: {{ aplicacion[2] }} (Aplicación #{{ aplicacion[0] }})</h1>
+            <p class="subtitulo-fuente">
+                Paciente: <strong>{{ aplicacion[4] }}</strong> | Terapeuta: <strong>{{ aplicacion[6] }}</strong> |
+                Respondido: {{ aplicacion[10].strftime('%Y-%m-%d %H:%M') if aplicacion[10] else '—' }}
+            </p>
+        </div>
+        <a href="{{ url_for('instrumentos') }}" class="btn btn-secundario">← Volver a Cuestionarios</a>
+    </div>
+
+    <h2 style="color: #1e3a8a; font-size: 1.15rem; margin-top: 1.5rem;">Puntuaciones por Dimensión (PostgreSQL)</h2>
+    <div class="tabla-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID Dimensión</th>
+                    <th>Dimensión Evaluada</th>
+                    <th>Puntuación Bruta</th>
+                    <th>Nivel</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in resultados_pg %}
+                <tr>
+                    <td>{{ r[0] }}</td>
+                    <td style="font-weight: 600;">{{ r[1] }}</td>
+                    <td style="font-size: 1.1rem; font-weight: bold; color: #1e3a8a;">{{ r[2] }}</td>
+                    <td>
+                        {% if r[2] >= 15 %}
+                            <span class="badge badge-cancelada">Elevada (Alerta Clínica)</span>
+                        {% elif r[2] >= 10 %}
+                            <span class="badge badge-programada">Moderada</span>
+                        {% else %}
+                            <span class="badge badge-completada">Leve / Estable</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" style="text-align: center; color: #64748b;">Sin puntuaciones registradas.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if doc_mongo %}
+    <div style="margin-top: 1.75rem;">
+        <h2 style="color: #1e3a8a; font-size: 1.15rem;">Detalle Documental de Respuestas (MongoDB Atlas)</h2>
+        <div class="tarjeta-clinica" style="border-left-color: #0ea5e9;">
+            <p><strong>Severidad global:</strong> {{ doc_mongo.get('nivel_severidad', '—') }} |
+               <strong>ID documento MongoDB:</strong> <code>{{ aplicacion[8] }}</code></p>
+            {% if doc_mongo.get('respuesta_abierta') %}
+                <p style="margin-top: 0.6rem;"><strong>Respuesta abierta del paciente:</strong> {{ doc_mongo.get('respuesta_abierta') }}</p>
+            {% endif %}
+        </div>
+
+        {% if doc_mongo.get('respuestas_items') %}
+        <div class="tabla-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Código</th>
+                        <th>Ítem</th>
+                        <th>Respuesta</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in doc_mongo.get('respuestas_items', []) %}
+                    <tr>
+                        <td><code>{{ item.get('codigo') }}</code></td>
+                        <td>{{ item.get('texto') }}</td>
+                        <td><strong>{{ item.get('valor') if item.get('valor') is not none else item.get('respuesta', '') }}</strong></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

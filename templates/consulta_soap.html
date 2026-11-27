@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Consulta y Nota SOAP — Sesión #{{ sesion[0] }}{% endblock %}
+
+{% block content %}
+<div class="contenedor">
+    <div class="encabezado-seccion">
+        <div>
+            <h1>Consulta Clínica y Nota SOAP — Sesión #{{ sesion[0] }}</h1>
+            <p class="subtitulo-fuente">
+                Paciente: <strong>{{ sesion[7] }}</strong> |
+                Fecha: <strong>{{ sesion[1] }}</strong> ({{ sesion[2] }} - {{ sesion[3] }}) |
+                Modalidad: <strong>{{ sesion[4] }}</strong> |
+                Estado:
+                <span class="badge {% if sesion[5] == 'Completada' %}badge-completada{% else %}badge-programada{% endif %}">
+                    {{ sesion[5] }}
+                </span>
+            </p>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <a href="{{ url_for('bitacoras_paciente', id_paciente=sesion[6]) }}" class="btn btn-secundario">Ver Bitácora del Paciente</a>
+            <a href="{{ url_for('sesiones') }}" class="btn btn-secundario">← Volver a Agenda</a>
+        </div>
+    </div>
+
+    <div class="tarjeta-clinica" style="border-left-color: #0ea5e9;">
+        <strong>Confidencialidad y almacenamiento híbrido:</strong> La transcripción, la Nota SOAP, el resumen simulado y
+        el historial de versiones se almacenan en <strong>MongoDB Atlas</strong> (<code>resumenes_sesion_soap</code> y
+        <code>historial_ediciones_clinicas</code>) y se enlazan mediante <code>referencia_resumen</code> en PostgreSQL (vía SP).
+        Solo el terapeuta asignado tiene acceso a este contenido clínico.
+    </div>
+
+    {% set ns = soap.get('nota_soap', {}) if soap else {} %}
+    <form action="{{ url_for('consulta_sesion', id_sesion=sesion[0]) }}" method="POST" style="margin-top: 1.5rem;">
+        <div class="grupo-form">
+            <label for="transcripcion_texto">1. Transcripción de la Consulta (texto o diálogo Terapeuta/Paciente):</label>
+            <textarea id="transcripcion_texto" name="transcripcion_texto" rows="6"
+                placeholder="Ejemplo:&#10;Terapeuta: ¿Cómo te sentiste esta semana con las estrategias acordadas?&#10;Paciente: Tuve ansiedad el miércoles por carga laboral, pero apliqué respiración 4-7-8 y logré descansar mejor.">{{ soap.get('transcripcion_texto', '') if soap else '' }}</textarea>
+            <div style="margin-top: 0.6rem;">
+                <button type="submit" name="accion" value="generar" class="btn" style="background-color: #0ea5e9; color: white;">
+                    ✨ Generar Borrador de Nota SOAP y Resumen Simulado
+                </button>
+            </div>
+        </div>
+
+        <h2 style="color: #1e3a8a; font-size: 1.2rem; margin: 1.5rem 0 0.75rem;">2. Nota Clínica Estructurada (SOAP)</h2>
+
+        <div class="fila-form">
+            <div class="grupo-form">
+                <label for="soap_subjetivo">S — Subjetivo (lo que reporta el paciente):</label>
+                <textarea id="soap_subjetivo" name="soap_subjetivo" rows="4">{{ ns.get('subjetivo', '') }}</textarea>
+            </div>
+            <div class="grupo-form">
+                <label for="soap_objetivo">O — Objetivo (observaciones clínicas y encuadre):</label>
+                <textarea id="soap_objetivo" name="soap_objetivo" rows="4">{{ ns.get('objetivo', '') }}</textarea>
+            </div>
+        </div>
+
+        <div class="fila-form">
+            <div class="grupo-form">
+                <label for="soap_analisis">A — Análisis (evolución y valoración):</label>
+                <textarea id="soap_analisis" name="soap_analisis" rows="4">{{ ns.get('analisis', '') }}</textarea>
+            </div>
+            <div class="grupo-form">
+                <label for="soap_plan">P — Plan (tareas, ajustes y seguimiento):</label>
+                <textarea id="soap_plan" name="soap_plan" rows="4">{{ ns.get('plan', '') }}</textarea>
+            </div>
+        </div>
+
+        <div class="grupo-form">
+            <label for="resumen_automatico">3. Resumen Automático Simulado de la Sesión:</label>
+            <textarea id="resumen_automatico" name="resumen_automatico" rows="3">{{ soap.get('resumen_automatico_simulado', '') if soap else '' }}</textarea>
+        </div>
+
+        <div class="fila-form">
+            <div class="grupo-form">
+                <label for="nota_extensa_terapeuta">Nota Privada Extensa del Terapeuta (guardada en historial de ediciones):</label>
+                <textarea id="nota_extensa_terapeuta" name="nota_extensa_terapeuta" rows="3" placeholder="Anotaciones confidenciales de trabajo clínico para próximas sesiones..."></textarea>
+            </div>
+            <div class="grupo-form">
+                <label for="motivo_cambio">Motivo de registro / edición (para trazabilidad de versiones):</label>
+                <input id="motivo_cambio" type="text" name="motivo_cambio"
+                    value="{% if soap and soap.get('version_actual', 0) > 0 %}Actualización de seguimiento clínico{% else %}Documentación inicial de consulta y Nota SOAP{% endif %}">
+            </div>
+        </div>
+
+        {% if soap and soap.get('palabras_clave') %}
+        <div style="margin-bottom: 1rem;">
+            <strong style="font-size: 0.9rem; color: #475569;">Palabras clave detectadas:</strong>
+            {% for kw in soap.get('palabras_clave', []) %}
+                <span class="etiqueta-chip">{{ kw }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <button type="submit" name="accion" value="guardar" class="btn btn-primario" style="padding: 0.7rem 1.4rem;">
+            {% if sesion[5] == 'Programada' %}Guardar Nota SOAP y Completar Sesión{% else %}Guardar Nueva Versión de Nota SOAP{% endif %}
+        </button>
+    </form>
+
+    <div style="margin-top: 2.25rem; padding-top: 1.5rem; border-top: 2px solid #e2e8f0;">
+        <h2 style="color: #1e3a8a; font-size: 1.15rem;">Historial de Versiones Clínicas (MongoDB Atlas)</h2>
+        {% if historial %}
+            {% for h in historial %}
+            <div class="tarjeta-clinica">
+                <div class="encabezado-seccion">
+                    <strong>Versión v{{ h.get('version', 1) }} — {{ h.get('tipo_evento', 'EDICION') }}</strong>
+                    <span class="subtitulo-fuente">{{ h.get('fecha_edicion').strftime('%Y-%m-%d %H:%M UTC') if h.get('fecha_edicion') else '' }}</span>
+                </div>
+                <p style="margin-top: 0.4rem;"><strong>Motivo:</strong> {{ h.get('motivo_cambio', 'Sin motivo especificado') }}</p>
+                {% if h.get('nota_extensa_terapeuta') %}
+                <p style="margin-top: 0.35rem; color: #334155;"><strong>Nota extensa del terapeuta:</strong> {{ h.get('nota_extensa_terapeuta') }}</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="subtitulo-fuente" style="margin-top: 0.5rem;">Aún no hay versiones guardadas para esta sesión.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

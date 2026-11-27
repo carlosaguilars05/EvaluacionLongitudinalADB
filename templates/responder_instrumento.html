@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Responder {{ aplicacion[2] }} - Gestión Clínica{% endblock %}
+
+{% block content %}
+<div class="contenedor" style="max-width: 820px;">
+    <div class="encabezado-seccion">
+        <div>
+            <h1>{{ plantilla.get('nombre', aplicacion[2]) }}</h1>
+            <p class="subtitulo-fuente">
+                {{ plantilla.get('descripcion', '') }} — Asignado por: <strong>{{ aplicacion[6] }}</strong>
+            </p>
+        </div>
+        <a href="{{ url_for('instrumentos') }}" class="btn btn-secundario">← Volver</a>
+    </div>
+
+    <div class="tarjeta-clinica" style="border-left-color: #0ea5e9;">
+        <strong>Instrucciones:</strong> Responde con honestidad considerando cómo te has sentido durante las últimas dos semanas.
+        Este cuestionario es un instrumento psicométrico simulado de apoyo al seguimiento terapéutico.
+    </div>
+
+    <form action="{{ url_for('responder_instrumento', id_aplicacion=aplicacion[0]) }}" method="POST" style="margin-top: 1.5rem;">
+        {% set etiquetas = plantilla.get('escala', {}).get('etiquetas', []) %}
+        {% for preg in plantilla.get('preguntas', []) %}
+            <div class="tarjeta-clinica" style="margin-top: 0.9rem;">
+                <label for="preg_{{ preg['codigo'] }}" style="display: block; font-weight: 600; color: #1e3a8a; margin-bottom: 0.6rem;">
+                    {{ loop.index }}. {{ preg['texto'] }}
+                </label>
+                {% if preg.get('tipo') == 'abierta' %}
+                    <textarea id="preg_{{ preg['codigo'] }}" name="preg_{{ preg['codigo'] }}" rows="3"
+                        style="width: 100%; padding: 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px;"
+                        placeholder="Escribe tu comentario abierto..."></textarea>
+                {% else %}
+                    <select id="preg_{{ preg['codigo'] }}" name="preg_{{ preg['codigo'] }}" required
+                        style="width: 100%; padding: 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px;">
+                        {% for et in etiquetas %}
+                            <option value="{{ loop.index0 }}">{{ et }}</option>
+                        {% endfor %}
+                    </select>
+                {% endif %}
+            </div>
+        {% endfor %}
+
+        <div style="margin-top: 1.5rem;">
+            <button type="submit" class="btn btn-primario" style="padding: 0.75rem 1.5rem;">Enviar Respuestas</button>
+            <a href="{{ url_for('instrumentos') }}" class="btn btn-secundario" style="margin-left: 0.5rem;">Cancelar</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

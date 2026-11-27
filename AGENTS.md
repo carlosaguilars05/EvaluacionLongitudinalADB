@@ -94,11 +94,12 @@ Este archivo define las **reglas obligatorias de arquitectura, codificación, ba
 ## 2. Mapa Actual del Proyecto (Línea Base)
 
 ### Estructura de archivos
-- `app.py`: Monolito Flask organizado en 12 secciones (27 rutas + `@app.before_request` + `@rol_requerido`, `.env`, hashes Werkzeug).
+- `app.py`: Monolito Flask organizado en 15 secciones (41 rutas + `@app.before_request` + `@rol_requerido`, `.env`, hashes Werkzeug).
 - `mongo_db.py`: Cliente MongoDB Atlas/Local con 4 colecciones clínicas flexibles, índices y operaciones coordinadas PostgreSQL ↔ MongoDB con compensación ante fallos.
-- `backup_BD.sql`: Respaldo PostgreSQL completo (30 tablas, 8 vistas `vw_*`, 59 SPs `sp_*` — 4 con tablas temporales —, 9 triggers `trg_*`).
-- `sql/`: Scripts SQL versionados (`01_indices_integridad.sql`, `03_triggers.sql`, `04_fase2_seguridad_sp.sql`, `04_fase3_sp_avanzados.sql`, `04_fase4_mongo_coordinacion_sp.sql`, `05_seed_data_fase3.sql`, `06_joins_y_consultas_avanzadas.sql`).
-- `templates/`: Plantilla base `base.html` + 17 plantillas Jinja2 (incluyendo `alertas.html`, `reportes.html`, `auditoria.html`) con aviso clínico obligatorio.
+- `clinica_soap.py`: Generador automático simulado de Notas SOAP y resúmenes de sesión a partir de transcripciones.
+- `backup_BD.sql`: Respaldo PostgreSQL completo (30 tablas, 8 vistas `vw_*`, 72 SPs `sp_*` — 4 con tablas temporales —, 9 triggers `trg_*`).
+- `sql/`: Scripts SQL versionados (`01_indices_integridad.sql`, `03_triggers.sql`, `04_fase2_seguridad_sp.sql`, `04_fase3_sp_avanzados.sql`, `04_fase4_mongo_coordinacion_sp.sql`, `04_fase5_clinico_sp.sql`, `05_seed_data_fase3.sql`, `06_joins_y_consultas_avanzadas.sql`).
+- `templates/`: Plantilla base `base.html` + 25 plantillas Jinja2 (incluyendo consulta SOAP, planes/objetivos, cuestionarios dinámicos, bitácoras, alertas, reportes y auditoría) con aviso clínico obligatorio.
 - `static/css/estilos.css` y `static/js/`.
 - `scripts/`: `setup_db.ps1`, `export_backup.ps1`, `migrar_passwords_seed.py`, `seed_mongo.py`.
 - `harness/verify_harness.py`: Verificador automatizado de reglas y progreso contra rúbrica.
@@ -148,8 +149,7 @@ Este archivo define las **reglas obligatorias de arquitectura, codificación, ba
 - `sp_consultar_agenda_*`: `(0: id_sesion, 1: fecha, 2: hora_inicio, 3: hora_fin, 4: modalidad, 5: estado_sesion, 6: terapeuta, 7: paciente)`
 - `sp_consultar_mis_pacientes`: `(0: id_paciente, 1: nombre, 2: ap_pat, 3: ap_mat, 4: fecha_nac, 5: sexo, 6: telefono)`
 
-### Pendientes de fases siguientes (Fases 5–7)
-- **Fase 5:** Flujo completo de consulta/transcripción/Nota SOAP, planes terapéuticos, objetivos, cuestionarios psicométricos simulados y bitácoras emocionales.
+### Pendientes de fases siguientes (Fases 6–7)
 - **Fase 6:** Pipeline ETL de preprocesamiento/análisis, tableros Highcharts (vía Jinja2 `| tojson`) y reportes descargables (CSV/XLSX/PDF).
 - **Fase 7:** Suite `pytest`, despliegue en Google Cloud Platform (Compute Engine + Cloud SQL + MongoDB Atlas) y `ubiquitous.udem.edu`, documentación final y paquete `.zip`/`.tar.gz`.
 

@@ -297,6 +297,53 @@ th {
     border-color: #1e40af;
 }
 
+.barra-progreso {
+    width: 100%;
+    height: 10px;
+    background-color: #e2e8f0;
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 0.4rem;
+}
+
+.barra-progreso-relleno {
+    height: 100%;
+    background-color: #2563eb;
+    border-radius: 999px;
+}
+
+.barra-progreso-relleno.completo {
+    background-color: #10b981;
+}
+
+.tarjeta-clinica {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-left: 4px solid #1e40af;
+    border-radius: 6px;
+    padding: 1.25rem;
+    margin-top: 1.25rem;
+}
+
+.etiqueta-chip {
+    display: inline-block;
+    background-color: #e0f2fe;
+    color: #0369a1;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    margin: 0.15rem;
+}
+
+.btn-secundario {
+    background-color: #e2e8f0;
+    color: #334155;
+}
+
+.btn-secundario:hover {
+    background-color: #cbd5e1;
+}
+
 @media (max-width: 768px) {
     nav {
         padding: 1rem;

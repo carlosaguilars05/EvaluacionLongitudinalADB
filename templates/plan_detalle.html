@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Plan Terapéutico #{{ plan[0] }} - Gestión Clínica{% endblock %}
+
+{% block content %}
+{% set rol = session.get('usuario_rol') %}
+<div class="contenedor">
+    <div class="encabezado-seccion">
+        <div>
+            <h1>Plan Terapéutico #{{ plan[0] }} — {{ plan[3] }}</h1>
+            <p class="subtitulo-fuente">
+                Terapeuta: <strong>{{ plan[4] }}</strong> | Inicio: {{ plan[6] }}
+                {% if plan[7] %} | Cierre: {{ plan[7] }}{% endif %} |
+                Estado:
+                <span class="badge {% if plan[5] == 'Completado' %}badge-completada{% else %}badge-programada{% endif %}">
+                    {{ plan[5] }}
+                </span>
+            </p>
+        </div>
+        <a href="{{ url_for('planes') }}" class="btn btn-secundario">← Volver a Planes</a>
+    </div>
+
+    <div class="tarjeta-clinica">
+        <strong>Enfoque general del plan:</strong> {{ plan[8] }}
+    </div>
+
+    {% if rol == 2 %}
+    <div class="tarjeta-clinica" style="border-left-color: #10b981;">
+        <h2 style="color: #065f46; font-size: 1.05rem; margin-bottom: 0.75rem;">+ Agregar Nuevo Objetivo al Plan</h2>
+        <form action="{{ url_for('crear_objetivo', id_plan=plan[0]) }}" method="POST">
+            <div class="fila-form">
+                <div class="grupo-form">
+                    <label for="nombre">Nombre del Objetivo:</label>
+                    <input id="nombre" type="text" name="nombre" required placeholder="Ej. Mantener rutina de descanso 5 noches/semana">
+                </div>
+                <div class="grupo-form">
+                    <label for="fecha_inicio">Fecha Inicio:</label>
+                    <input id="fecha_inicio" type="date" name="fecha_inicio">
+                </div>
+                <div class="grupo-form">
+                    <label for="fecha_meta">Fecha Meta:</label>
+                    <input id="fecha_meta" type="date" name="fecha_meta">
+                </div>
+            </div>
+            <div class="grupo-form">
+                <label for="descripcion">Descripción / Criterio de Logro:</label>
+                <textarea id="descripcion" name="descripcion" rows="2"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primario">Agregar Objetivo</button>
+        </form>
+    </div>
+    {% endif %}
+
+    <h2 style="color: #1e3a8a; font-size: 1.2rem; margin-top: 1.75rem;">Objetivos Terapéuticos y Avance Longitudinal</h2>
+
+    {% for obj in objetivos %}
+    <div class="tarjeta-clinica">
+        <div class="encabezado-seccion">
+            <div>
+                <h3 style="color: #1e3a8a; margin-bottom: 0.25rem;">{{ obj[1] }}</h3>
+                <p class="subtitulo-fuente">{{ obj[2] }}</p>
+            </div>
+            <div style="text-align: right;">
+                <span class="badge {% if obj[3] == 'Logrado' %}badge-completada{% else %}badge-programada{% endif %}">
+                    {{ obj[3] }}
+                </span>
+                <div style="font-size: 1.1rem; font-weight: bold; color: #1e3a8a; margin-top: 0.3rem;">
+                    {{ obj[6] }}%
+                </div>
+            </div>
+        </div>
+
+        <div class="barra-progreso">
+            <div class="barra-progreso-relleno {% if obj[6] >= 100 %}completo{% endif %}" style="width: {{ obj[6] }}%;"></div>
+        </div>
+
+        <p class="subtitulo-fuente" style="margin-top: 0.5rem;">
+            Inicio: {{ obj[4] or '—' }} | Meta: {{ obj[5] or '—' }} | Último comentario: {{ obj[8] }}
+        </p>
+
+        {% if rol == 2 %}
+        <form action="{{ url_for('registrar_avance_objetivo', id_objetivo=obj[0]) }}" method="POST" style="margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid #e2e8f0;">
+            <div class="fila-form">
+                <div class="grupo-form" style="max-width: 170px;">
+                    <label for="pct_{{ obj[0] }}">Nuevo Avance (%):</label>
+                    <input id="pct_{{ obj[0] }}" type="number" name="porcentaje" min="0" max="100" step="5" value="{{ obj[6]|int }}" required>
+                </div>
+                <div class="grupo-form">
+                    <label for="com_{{ obj[0] }}">Comentario Clínico de Seguimiento:</label>
+                    <input id="com_{{ obj[0] }}" type="text" name="comentario" required placeholder="Ej. Avance sostenido en práctica semanal (100% activa cierre automático).">
+                </div>
+                <div class="grupo-form" style="max-width: 190px; display: flex; align-items: flex-end;">
+                    <button type="submit" class="btn btn-primario" style="width: 100%;">Registrar Avance</button>
+                </div>
+            </div>
+        </form>
+        {% endif %}
+
+        {% set hist = historiales.get(obj[0], []) %}
+        {% if hist %}
+        <details style="margin-top: 0.75rem;">
+            <summary style="cursor: pointer; font-weight: 600; color: #334155; font-size: 0.9rem;">
+                Ver historial de registros ({{ hist|length }})
+            </summary>
+            <ul style="margin: 0.5rem 0 0 1.25rem; font-size: 0.9rem; color: #475569;">
+                {% for h in hist %}
+                <li style="margin-bottom: 0.3rem;">
+                    <strong>{{ h[0] }}%</strong> — {{ h[1].strftime('%Y-%m-%d %H:%M') if h[1] else '' }}: {{ h[2] or 'Sin comentario' }}
+                </li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+    </div>
+    {% else %}
+    <p class="subtitulo-fuente" style="margin-top: 1rem;">Este plan aún no tiene objetivos registrados.</p>
+    {% endfor %}
+</div>
+{% endblock %}

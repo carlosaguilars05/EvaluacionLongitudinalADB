@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Planes Terapéuticos - Gestión Clínica{% endblock %}
+
+{% block content %}
+{% set rol = session.get('usuario_rol') %}
+<div class="contenedor">
+    <h1>{% if rol == 2 %}Planes Terapéuticos de Mis Pacientes{% else %}Mis Planes Terapéuticos y Objetivos{% endif %}</h1>
+    <p class="subtitulo-fuente">
+        Seguimiento estructurado de planes y objetivos en PostgreSQL vía Stored Procedures (con auditoría y cierre reactivo al 100%).
+    </p>
+
+    {% if rol == 2 %}
+    <div class="tarjeta-clinica">
+        <h2 style="color: #1e3a8a; font-size: 1.1rem; margin-bottom: 0.85rem;">+ Crear Nuevo Plan Terapéutico</h2>
+        <form action="{{ url_for('crear_plan') }}" method="POST">
+            <div class="fila-form">
+                <div class="grupo-form">
+                    <label for="id_asignacion">Paciente Asignado:</label>
+                    <select id="id_asignacion" name="id_asignacion" required>
+                        <option value="" disabled selected>-- Selecciona una asignación vigente --</option>
+                        {% for a in Asignaciones %}
+                            <option value="{{ a[0] }}">{{ a[2] }} (desde {{ a[3] }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="grupo-form">
+                    <label for="fecha_inicio">Fecha de Inicio:</label>
+                    <input id="fecha_inicio" type="date" name="fecha_inicio">
+                </div>
+            </div>
+            <div class="grupo-form">
+                <label for="descripcion_general">Descripción / Enfoque Terapéutico:</label>
+                <textarea id="descripcion_general" name="descripcion_general" rows="2" required placeholder="Ej. Intervención cognitivo-conductual orientada a manejo de estrés laboral y descanso."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primario">Crear Plan</button>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="tabla-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Paciente</th>
+                    <th>Terapeuta</th>
+                    <th>Descripción General</th>
+                    <th>Inicio / Cierre</th>
+                    <th>Objetivos Logrados</th>
+                    <th>Estado</th>
+                    <th>Acción</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pl in Planes %}
+                <tr>
+                    <td>#{{ pl[0] }}</td>
+                    <td style="font-weight: 600; color: #1e3a8a;">{{ pl[3] }}</td>
+                    <td>{{ pl[4] }}</td>
+                    <td>{{ pl[8] }}</td>
+                    <td style="white-space: nowrap;">{{ pl[6] }}{% if pl[7] %} → {{ pl[7] }}{% endif %}</td>
+                    <td><strong>{{ pl[10] }} / {{ pl[9] }}</strong></td>
+                    <td>
+                        <span class="badge {% if pl[5] == 'Completado' %}badge-completada{% else %}badge-programada{% endif %}">
+                            {{ pl[5] }}
+                        </span>
+                    </td>
+                    <td>
+                        <a href="{{ url_for('detalle_plan', id_plan=pl[0]) }}" class="btn btn-primario">
+                            {% if rol == 2 %}Gestionar Objetivos{% else %}Ver Avance{% endif %}
+                        </a>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" style="text-align: center; color: #64748b; padding: 2rem;">No hay planes terapéuticos registrados todavía.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
