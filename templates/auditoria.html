@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Auditoría del Sistema - Gestión Clínica{% endblock %}
+
+{% block content %}
+<div class="contenedor">
+    <div class="encabezado-seccion">
+        <div>
+            <h1>Bitácora de Auditoría</h1>
+            <p class="subtitulo-fuente">Fuente: vista <code>vw_reporte_auditoria</code> vía <code>sp_consultar_auditoria</code> (poblada automáticamente por triggers en entidades críticas).</p>
+        </div>
+    </div>
+
+    <div class="tabla-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Fecha / Hora</th>
+                    <th>Usuario Responsable</th>
+                    <th>Acción</th>
+                    <th>Módulo</th>
+                    <th>Tabla Afectada</th>
+                    <th>IP</th>
+                    <th>Resultado</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for au in Auditoria %}
+                <tr>
+                    <td>{{ au[0] }}</td>
+                    <td style="white-space: nowrap;">{{ au[1].strftime('%Y-%m-%d %H:%M:%S') if au[1] else '' }}</td>
+                    <td style="font-weight: 600; color: #1e40af;">{{ au[2] }}</td>
+                    <td><span class="badge badge-programada">{{ au[3] }}</span></td>
+                    <td>{{ au[4] or '' }}</td>
+                    <td><code>{{ au[5] or '' }}</code></td>
+                    <td>{{ au[6] or '' }}</td>
+                    <td><span class="badge badge-completada">{{ au[7] or 'EXITO' }}</span></td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" style="text-align: center; color: #64748b; padding: 2rem;">No hay eventos registrados en auditoría.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

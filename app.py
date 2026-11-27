@@ -2,7 +2,7 @@
 Sistema de Gestión Clínica (Equipo 01) — Backend Flask + Jinja2 + PostgreSQL (SP exclusivo).
 
 Estructura del archivo:
-  1. Configuración e Infraestructura (variables de entorno, Flask y conexión BD)
+  1. Configuración e Infraestructura (variables de entorno, Flask, conexión BD y auditoría)
   2. Seguridad y Control de Acceso (RBAC y guardia global)
   3. Autenticación (/login, /logout)
   4. Inicio / Dashboard (/)
@@ -10,7 +10,10 @@ Estructura del archivo:
   6. Módulo de Terapeutas (/terapeutas, CRUD y baja lógica)
   7. Módulo de Asignaciones (/asignaciones, vinculación terapeuta-paciente)
   8. Módulo de Agenda y Sesiones (/sesiones, agendar y cancelar)
-  9. Punto de Entrada (__main__)
+  9. Módulo de Alertas Clínicas (/alertas, atención de alertas — vw_alertas_activas)
+ 10. Módulo de Reportes Avanzados (/reportes — 4 SPs con tablas temporales y vistas vw_*)
+ 11. Módulo de Auditoría (/auditoria — vw_reporte_auditoria, Solo Admin)
+ 12. Punto de Entrada (__main__)
 """
 
 from functools import wraps
@@ -74,6 +77,14 @@ def verificar_conexion_bd():
         return bool(ok), mensaje
     except Exception as exc:
         return False, f"No se pudo conectar a PostgreSQL: {exc}"
+
+
+def establecer_contexto_auditoria(cur):
+    """Configura usuario autenticado e IP de la petición para los triggers de auditoría."""
+    cur.execute(
+        "CALL sp_establecer_contexto_auditoria(%s, %s, NULL)",
+        (session.get("usuario_id"), request.remote_addr or "127.0.0.1"),
+    )
 
 
 # ==============================================================================
@@ -238,6 +249,7 @@ def registra():
 
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             cur.execute(
                 "CALL sp_registrar_paciente(%s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL)",
                 (correo, password_segura, nombres, apellido_paterno, apellido_materno, fecha_n, sexo, tel),
@@ -277,6 +289,7 @@ def actualizar():
 
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             cur.execute(
                 "CALL sp_actualizar_paciente(%s, %s, %s, %s, %s, NULL)",
                 (id_paciente, tel, nombres, apellido_paterno, apellido_materno),
@@ -293,6 +306,7 @@ def actualizar():
 def borrar(id_paciente):
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             cur.execute("CALL sp_dar_baja_paciente(%s, NULL)", (id_paciente,))
             (mensaje_bd,) = cur.fetchone()
         conexion.commit()
@@ -312,7 +326,17 @@ def terapeutas():
             cur.execute("CALL sp_consultar_terapeutas(1, 'cursor_terapeutas', NULL)")
             cur.execute("FETCH ALL FROM cursor_terapeutas")
             lista_terapeutas = cur.fetchall()
-    return render_template("terapeutas.html", Terapeutas=lista_terapeutas)
+
+            # Enriquecer con especialidades desde vw_directorio_terapeutas vía SP
+            cur.execute("CALL sp_consultar_directorio_terapeutas('cursor_dir_t', NULL)")
+            cur.execute("FETCH ALL FROM cursor_dir_t")
+            especialidades_por_id = {fila[0]: fila[3] for fila in cur.fetchall()}
+
+    return render_template(
+        "terapeutas.html",
+        Terapeutas=lista_terapeutas,
+        EspecialidadesPorId=especialidades_por_id,
+    )
 
 
 @app.route("/insertarTerapeuta")
@@ -339,6 +363,7 @@ def registra_terapeuta():
 
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             cur.execute(
                 "CALL sp_registrar_terapeuta(%s, %s, %s, %s, %s, %s, NULL, NULL)",
                 (correo, password_segura, nombres, apellido_paterno, apellido_materno, cedula),
@@ -378,6 +403,7 @@ def actualizar_terapeuta():
 
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             cur.execute(
                 "CALL sp_actualizar_terapeuta(%s, %s, %s, %s, %s, NULL)",
                 (id_terapeuta, nombres, apellido_paterno, apellido_materno, cedula),
@@ -394,6 +420,7 @@ def actualizar_terapeuta():
 def borrarTerapeuta(id_terapeuta):
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             cur.execute("CALL sp_dar_baja_terapeuta(%s, NULL)", (id_terapeuta,))
             (mensaje_bd,) = cur.fetchone()
         conexion.commit()
@@ -441,6 +468,7 @@ def registra_asignacion():
 
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             cur.execute(
                 "CALL sp_asignar_terapeuta_paciente(%s, %s, %s, NULL, NULL)",
                 (id_terapeuta, id_paciente, id_admin),
@@ -520,6 +548,7 @@ def registra_sesion():
 
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             if session.get("usuario_rol") == 2:
                 cur.execute(
                     "CALL sp_validar_propiedad_asignacion(%s, %s, NULL, NULL)",
@@ -549,6 +578,7 @@ def registra_sesion():
 def cancelar_sesion(id_sesion):
     with conectar() as conexion:
         with conexion.cursor() as cur:
+            establecer_contexto_auditoria(cur)
             if session.get("usuario_rol") == 2:
                 cur.execute(
                     "CALL sp_validar_propiedad_sesion(%s, %s, NULL, NULL)",
@@ -568,7 +598,158 @@ def cancelar_sesion(id_sesion):
 
 
 # ==============================================================================
-# 9. Punto de Entrada
+# 9. Módulo de Alertas Clínicas (Roles 1 y 2 — Vista vw_alertas_activas vía SP)
+# ==============================================================================
+@app.route("/alertas")
+@rol_requerido(1, 2)
+def alertas():
+    rol = session.get("usuario_rol")
+    filtro_terapeuta = None if rol == 1 else session.get("terapeuta_id")
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_alertas_activas(%s, 'cursor_alertas', NULL)", (filtro_terapeuta,))
+            cur.execute("FETCH ALL FROM cursor_alertas")
+            lista_alertas = cur.fetchall()
+
+    return render_template("alertas.html", Alertas=lista_alertas)
+
+
+@app.route("/alertas/atender/<int:id_alerta>", methods=["POST"])
+@rol_requerido(1, 2)
+def atender_alerta(id_alerta):
+    rol = session.get("usuario_rol")
+    filtro_terapeuta = None if rol == 1 else session.get("terapeuta_id")
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute(
+                "CALL sp_atender_alerta(%s, %s, NULL, NULL)",
+                (id_alerta, filtro_terapeuta),
+            )
+            atendida, mensaje_bd = cur.fetchone()
+        conexion.commit()
+
+    flash(mensaje_bd, "success" if atendida else "error")
+    return redirect(url_for("alertas"))
+
+
+# ==============================================================================
+# 10. Módulo de Reportes Avanzados (4 SPs con Tablas Temporales + Vistas vw_*)
+# ==============================================================================
+@app.route("/reportes")
+@rol_requerido(1, 2)
+def reportes():
+    rol = session.get("usuario_rol")
+    filtro_terapeuta = None if rol == 1 else session.get("terapeuta_id")
+
+    if rol == 1:
+        vistas_permitidas = [
+            ("anonimizados", "Indicadores Anonimizados (SP Temporal)"),
+            ("ranking", "Ranking Terapeutas (SP Temporal)"),
+            ("planes", "Avance de Planes (SP Temporal)"),
+            ("directorio_pacientes", "Directorio Pacientes (vw_directorio_pacientes)"),
+            ("directorio_terapeutas", "Directorio Terapeutas (vw_directorio_terapeutas)"),
+            ("progreso", "Progreso Clínico (vw_progreso_clinico)"),
+            ("instrumentos", "Resultados Escalas (vw_resultados_instrumentos)"),
+        ]
+        vista_default = "anonimizados"
+    else:
+        vistas_permitidas = [
+            ("evolucion", "Evolución Longitudinal (SP Temporal)"),
+            ("planes", "Avance de Mis Planes (SP Temporal)"),
+            ("progreso", "Progreso Clínico (vw_progreso_clinico)"),
+            ("instrumentos", "Resultados Escalas (vw_resultados_instrumentos)"),
+        ]
+        vista_default = "evolucion"
+
+    claves_validas = {k for k, _ in vistas_permitidas}
+    vista_actual = request.args.get("vista", vista_default)
+    if vista_actual not in claves_validas:
+        vista_actual = vista_default
+
+    filas = []
+    columnas = []
+    fuente_bd = ""
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            if vista_actual == "anonimizados":
+                cur.execute("CALL sp_reporte_indicadores_anonimizados('cursor_rep', NULL)")
+                cur.execute("FETCH ALL FROM cursor_rep")
+                filas = cur.fetchall()
+                columnas = ["Rango Etario", "Modalidad", "Pacientes Únicos", "Total Sesiones", "% Completadas", "Promedio Escala"]
+                fuente_bd = "SP con Tabla Temporal: sp_reporte_indicadores_anonimizados (sin PII)"
+            elif vista_actual == "ranking":
+                cur.execute("CALL sp_reporte_ranking_terapeutas('cursor_rep', NULL)")
+                cur.execute("FETCH ALL FROM cursor_rep")
+                filas = cur.fetchall()
+                columnas = ["Posición", "Terapeuta", "Cédula", "Especialidades", "Pacientes Activos", "Sesiones", "Completadas", "Canceladas", "% Cumplimiento"]
+                fuente_bd = "SP con Tabla Temporal + RANK() OVER: sp_reporte_ranking_terapeutas (sobre vw_directorio_terapeutas)"
+            elif vista_actual == "evolucion":
+                cur.execute("CALL sp_reporte_evolucion_longitudinal(%s, 'cursor_rep', NULL)", (filtro_terapeuta,))
+                cur.execute("FETCH ALL FROM cursor_rep")
+                filas = cur.fetchall()
+                columnas = ["Paciente", "Instrumento", "Dimensión", "Fecha", "Puntuación", "Previa (LAG)", "Cambio (Δ)", "Promedio (AVG OVER)", "Clasificación"]
+                fuente_bd = "SP con Tabla Temporal + LAG/AVG OVER: sp_reporte_evolucion_longitudinal (sobre vw_resultados_instrumentos)"
+            elif vista_actual == "planes":
+                cur.execute("CALL sp_reporte_avance_planes(%s, 'cursor_rep', NULL)", (filtro_terapeuta,))
+                cur.execute("FETCH ALL FROM cursor_rep")
+                filas = cur.fetchall()
+                columnas = ["ID Plan", "Paciente", "Terapeuta", "Estado Plan", "Objetivos", "Logrados", "Avance Promedio (%)", "Fecha Inicio"]
+                fuente_bd = "SP con Tabla Temporal + CTE: sp_reporte_avance_planes"
+            elif vista_actual == "directorio_pacientes":
+                cur.execute("CALL sp_consultar_directorio_pacientes('cursor_rep', NULL)")
+                cur.execute("FETCH ALL FROM cursor_rep")
+                filas = cur.fetchall()
+                columnas = ["ID", "Nombre Completo", "Teléfono", "Correo", "Estatus", "Fecha Registro"]
+                fuente_bd = "Vista vw_directorio_pacientes (vía sp_consultar_directorio_pacientes)"
+            elif vista_actual == "directorio_terapeutas":
+                cur.execute("CALL sp_consultar_directorio_terapeutas('cursor_rep', NULL)")
+                cur.execute("FETCH ALL FROM cursor_rep")
+                filas = cur.fetchall()
+                columnas = ["ID", "Terapeuta", "Cédula Profesional", "Especialidades", "Estatus"]
+                fuente_bd = "Vista vw_directorio_terapeutas (vía sp_consultar_directorio_terapeutas)"
+            elif vista_actual == "progreso":
+                cur.execute("CALL sp_consultar_progreso_clinico(%s, 'cursor_rep', NULL)", (filtro_terapeuta,))
+                cur.execute("FETCH ALL FROM cursor_rep")
+                filas = cur.fetchall()
+                columnas = ["Paciente", "Objetivo Terapéutico", "Estado", "Avance Actual (%)", "Última Actualización", "Comentario"]
+                fuente_bd = "Vista vw_progreso_clinico (vía sp_consultar_progreso_clinico)"
+            elif vista_actual == "instrumentos":
+                cur.execute("CALL sp_consultar_resultados_instrumentos(%s, 'cursor_rep', NULL)", (filtro_terapeuta,))
+                cur.execute("FETCH ALL FROM cursor_rep")
+                filas = cur.fetchall()
+                columnas = ["ID Aplicación", "Instrumento", "Paciente", "Dimensión Evaluada", "Puntuación Bruta", "Fecha Respuesta"]
+                fuente_bd = "Vista vw_resultados_instrumentos (vía sp_consultar_resultados_instrumentos)"
+
+    return render_template(
+        "reportes.html",
+        vistas_permitidas=vistas_permitidas,
+        vista_actual=vista_actual,
+        columnas=columnas,
+        filas=filas,
+        fuente_bd=fuente_bd,
+    )
+
+
+# ==============================================================================
+# 11. Módulo de Auditoría (Solo Administrador - Rol 1 — vw_reporte_auditoria)
+# ==============================================================================
+@app.route("/auditoria")
+@rol_requerido(1)
+def auditoria():
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_auditoria(100, 'cursor_auditoria', NULL)")
+            cur.execute("FETCH ALL FROM cursor_auditoria")
+            registros_auditoria = cur.fetchall()
+
+    return render_template("auditoria.html", Auditoria=registros_auditoria)
+
+
+# ==============================================================================
+# 12. Punto de Entrada
 # ==============================================================================
 if __name__ == "__main__":
     ok, msg = verificar_conexion_bd()

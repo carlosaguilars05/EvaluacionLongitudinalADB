@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Alertas Clínicas - Gestión Clínica{% endblock %}
+
+{% block content %}
+<div class="contenedor">
+    <div class="encabezado-seccion">
+        <div>
+            <h1>Alertas Clínicas Activas</h1>
+            <p class="subtitulo-fuente">Fuente: vista <code>vw_alertas_activas</code> vía <code>sp_consultar_alertas_activas</code> (generadas automáticamente por trigger ante riesgo elevado).</p>
+        </div>
+    </div>
+
+    <div class="tabla-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Tipo de Alerta</th>
+                    <th>Paciente</th>
+                    <th>Terapeuta Notificado</th>
+                    <th>Descripción</th>
+                    <th>Fecha Generación</th>
+                    <th>Acción</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in Alertas %}
+                <tr>
+                    <td>{{ a[0] }}</td>
+                    <td><span class="badge badge-cancelada">{{ a[1] }}</span></td>
+                    <td style="font-weight: 600; color: #1e3a8a;">{{ a[3] }}</td>
+                    <td>{{ a[4] }}</td>
+                    <td>{{ a[2] }}</td>
+                    <td style="white-space: nowrap;">{{ a[5].strftime('%Y-%m-%d %H:%M') if a[5] else '' }}</td>
+                    <td>
+                        <form action="{{ url_for('atender_alerta', id_alerta=a[0]) }}" method="POST" style="display:inline;">
+                            <button type="submit" class="btn btn-primario" onclick="return confirm('¿Marcar esta alerta como atendida?');">Atender</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" style="text-align: center; color: #64748b; padding: 2rem;">No hay alertas clínicas pendientes en este momento.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

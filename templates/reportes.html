@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Reportes Avanzados - Gestión Clínica{% endblock %}
+
+{% block content %}
+<div class="contenedor">
+    <div class="encabezado-seccion">
+        <div>
+            <h1>Centro de Reportes y Vistas Clínicas</h1>
+            <p class="subtitulo-fuente">{{ fuente_bd }}</p>
+        </div>
+    </div>
+
+    <div class="tabs-reportes">
+        {% for clave, etiqueta in vistas_permitidas %}
+            <a href="{{ url_for('reportes', vista=clave) }}"
+               class="tab-btn {% if vista_actual == clave %}activa{% endif %}">
+                {{ etiqueta }}
+            </a>
+        {% endfor %}
+    </div>
+
+    <div class="tabla-responsive">
+        <table>
+            <thead>
+                <tr>
+                    {% for col in columnas %}
+                        <th>{{ col }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for fila in filas %}
+                <tr>
+                    {% for valor in fila %}
+                        <td>
+                            {% if valor is none %}
+                                <span style="color: #94a3b8;">—</span>
+                            {% elif valor == 'Mejoría Relevante' or valor == 'Completado' or valor == 'Logrado' or valor == 'Activo' %}
+                                <span class="badge badge-completada">{{ valor }}</span>
+                            {% elif valor == 'Alerta de Deterioro' or valor == 'Baja Lógica' or valor == 'Baja' %}
+                                <span class="badge badge-cancelada">{{ valor }}</span>
+                            {% elif valor == 'Estable' or valor == 'Línea Base' or valor == 'Pendiente' %}
+                                <span class="badge badge-programada">{{ valor }}</span>
+                            {% else %}
+                                {{ valor }}
+                            {% endif %}
+                        </td>
+                    {% endfor %}
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="{{ columnas|length }}" style="text-align: center; color: #64748b; padding: 2rem;">
+                        No hay datos disponibles para este reporte.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

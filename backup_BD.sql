@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict PuNGCWdCibQriNAGAV9wSyijN7QJ0DkXpLXI8QCcswWTJhCWfpeTltFnHlCJVNA
+\restrict aTRv6KMRKGp5rbJAXPMgbDWluhEL1pu5ZmwHZVSoW5xGYK5d2EqLDhIcYVfU7LS
 
 -- Dumped from database version 17.12
 -- Dumped by pg_dump version 17.12
@@ -18,6 +18,215 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: fn_alerta_riesgo_instrumento(); Type: FUNCTION; Schema: public; Owner: usuario
+--
+
+CREATE FUNCTION public.fn_alerta_riesgo_instrumento() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_id_paciente integer;
+    v_id_terapeuta integer;
+    v_instrumento character varying(150);
+    v_dimension character varying(100);
+    v_id_tipo_alerta integer;
+    v_desc text;
+BEGIN
+    -- Umbral clínico moderado-alto (>= 15 puntos en escala psicométrica simulada)
+    IF NEW.puntuacion_bruta >= 15.00 THEN
+        SELECT ai.id_paciente, ai.id_terapeuta, i.nombre
+        INTO v_id_paciente, v_id_terapeuta, v_instrumento
+        FROM public.aplicacion_instrumento ai
+        JOIN public.instrumento i ON ai.id_instrumento = i.id_instrumento
+        WHERE ai.id_aplicacion = NEW.id_aplicacion;
+
+        SELECT nombre_dimension INTO v_dimension
+        FROM public.dimension_instrumento
+        WHERE id_dimension = NEW.id_dimension;
+
+        SELECT id_tipo_alerta INTO v_id_tipo_alerta
+        FROM public.tipo_alerta
+        ORDER BY id_tipo_alerta ASC
+        LIMIT 1;
+
+        IF v_id_paciente IS NOT NULL AND v_id_terapeuta IS NOT NULL AND v_id_tipo_alerta IS NOT NULL THEN
+            v_desc := format(
+                'Puntuación elevada detectada automáticamente (%s pts) en %s — dimensión "%s" (aplicación #%s). Requiere revisión terapéutica.',
+                NEW.puntuacion_bruta,
+                COALESCE(v_instrumento, 'Instrumento'),
+                COALESCE(v_dimension, 'General'),
+                NEW.id_aplicacion
+            );
+
+            INSERT INTO public.alerta (id_paciente, id_terapeuta, id_tipo_alerta, descripcion, atendida)
+            VALUES (v_id_paciente, v_id_terapeuta, v_id_tipo_alerta, v_desc, FALSE);
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.fn_alerta_riesgo_instrumento() OWNER TO usuario;
+
+--
+-- Name: fn_auditoria_clinica(); Type: FUNCTION; Schema: public; Owner: usuario
+--
+
+CREATE FUNCTION public.fn_auditoria_clinica() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_id_usuario integer;
+    v_ip character varying(45);
+    v_modulo character varying(50);
+    v_id_registro integer;
+    v_row_json jsonb;
+    v_pk_col text;
+BEGIN
+    v_modulo := COALESCE(TG_ARGV[0], TG_TABLE_NAME);
+    v_pk_col := COALESCE(TG_ARGV[1], 'id_' || TG_TABLE_NAME);
+
+    v_id_usuario := NULLIF(current_setting('app.current_user_id', true), '')::integer;
+    v_ip := COALESCE(NULLIF(current_setting('app.client_ip', true), ''), '127.0.0.1');
+
+    IF TG_OP = 'DELETE' THEN
+        v_row_json := to_jsonb(OLD);
+    ELSE
+        v_row_json := to_jsonb(NEW);
+    END IF;
+
+    v_id_registro := NULLIF(v_row_json ->> v_pk_col, '')::integer;
+
+    INSERT INTO public.auditoria (
+        id_usuario,
+        accion,
+        modulo,
+        nombre_tabla_afectada,
+        id_registro,
+        direccion_ip,
+        resultado
+    )
+    VALUES (
+        v_id_usuario,
+        TG_OP,
+        v_modulo,
+        TG_TABLE_NAME,
+        v_id_registro,
+        v_ip,
+        'EXITO'
+    );
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.fn_auditoria_clinica() OWNER TO usuario;
+
+--
+-- Name: fn_progreso_reactivo_objetivo(); Type: FUNCTION; Schema: public; Owner: usuario
+--
+
+CREATE FUNCTION public.fn_progreso_reactivo_objetivo() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_id_plan integer;
+    v_pendientes integer;
+BEGIN
+    IF NEW.porcentaje_avance_registrado >= 100.00 THEN
+        UPDATE public.objetivo
+        SET id_estado_objetivo = 2
+        WHERE id_objetivo = NEW.id_objetivo
+          AND id_estado_objetivo <> 2;
+
+        SELECT id_plan INTO v_id_plan
+        FROM public.objetivo
+        WHERE id_objetivo = NEW.id_objetivo;
+
+        IF v_id_plan IS NOT NULL THEN
+            SELECT COUNT(*) INTO v_pendientes
+            FROM public.objetivo
+            WHERE id_plan = v_id_plan
+              AND id_estado_objetivo <> 2;
+
+            IF v_pendientes = 0 THEN
+                UPDATE public.plan_terapeutico
+                SET id_estado_plan = 2,
+                    fecha_fin = COALESCE(fecha_fin, CURRENT_DATE)
+                WHERE id_plan = v_id_plan
+                  AND id_estado_plan <> 2;
+            END IF;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.fn_progreso_reactivo_objetivo() OWNER TO usuario;
+
+--
+-- Name: fn_validar_sesion_integridad(); Type: FUNCTION; Schema: public; Owner: usuario
+--
+
+CREATE FUNCTION public.fn_validar_sesion_integridad() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_id_terapeuta integer;
+    v_estado_asignacion integer;
+    v_conflictos integer;
+BEGIN
+    IF NEW.hora_fin <= NEW.hora_inicio THEN
+        RAISE EXCEPTION 'Integridad horaria: hora_fin (%) debe ser posterior a hora_inicio (%).',
+            NEW.hora_fin, NEW.hora_inicio;
+    END IF;
+
+    SELECT id_terapeuta, id_estado_asignacion
+    INTO v_id_terapeuta, v_estado_asignacion
+    FROM public.asignacion_terapeuta_paciente
+    WHERE id_asignacion = NEW.id_asignacion;
+
+    IF v_id_terapeuta IS NULL THEN
+        RAISE EXCEPTION 'Asignación clínica % inexistente.', NEW.id_asignacion;
+    END IF;
+
+    IF TG_OP = 'INSERT' AND v_estado_asignacion <> 1 THEN
+        RAISE EXCEPTION 'No se puede agendar sesión sobre una asignación finalizada (id_asignacion=%).',
+            NEW.id_asignacion;
+    END IF;
+
+    IF NEW.id_estado_sesion = 1 THEN
+        SELECT COUNT(*) INTO v_conflictos
+        FROM public.sesion s
+        JOIN public.asignacion_terapeuta_paciente a ON s.id_asignacion = a.id_asignacion
+        WHERE a.id_terapeuta = v_id_terapeuta
+          AND s.fecha = NEW.fecha
+          AND s.id_estado_sesion = 1
+          AND s.id_sesion <> COALESCE(NEW.id_sesion, -1)
+          AND (NEW.hora_inicio < s.hora_fin AND NEW.hora_fin > s.hora_inicio);
+
+        IF v_conflictos > 0 THEN
+            RAISE EXCEPTION 'Empalme de horario detectado por trigger para el terapeuta % en fecha %.',
+                v_id_terapeuta, NEW.fecha;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.fn_validar_sesion_integridad() OWNER TO usuario;
 
 --
 -- Name: sp_actualizar_paciente(integer, character varying, character varying, character varying, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -159,6 +368,41 @@ $$;
 ALTER PROCEDURE public.sp_asignar_terapeuta_paciente(IN p_id_terapeuta integer, IN p_id_paciente integer, IN p_asignado_por integer, OUT p_id_asignacion integer, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
+-- Name: sp_atender_alerta(integer, integer); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_atender_alerta(IN p_id_alerta integer, IN p_id_terapeuta integer, OUT p_atendida boolean, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_filas integer;
+BEGIN
+    UPDATE public.alerta
+    SET atendida = TRUE
+    WHERE id_alerta = p_id_alerta
+      AND atendida = FALSE
+      AND (p_id_terapeuta IS NULL OR id_terapeuta = p_id_terapeuta);
+
+    GET DIAGNOSTICS v_filas = ROW_COUNT;
+
+    IF v_filas > 0 THEN
+        p_atendida := TRUE;
+        p_mensaje := 'Alerta marcada como atendida correctamente.';
+    ELSE
+        p_atendida := FALSE;
+        p_mensaje := 'No se pudo atender la alerta (inexistente, ya atendida o sin permiso).';
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_atendida := FALSE;
+        p_mensaje := 'Error al atender la alerta: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_atender_alerta(IN p_id_alerta integer, IN p_id_terapeuta integer, OUT p_atendida boolean, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
 -- Name: sp_cancelar_sesion(integer); Type: PROCEDURE; Schema: public; Owner: usuario
 --
 
@@ -277,6 +521,38 @@ $$;
 ALTER PROCEDURE public.sp_consultar_agenda_terapeuta(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
+-- Name: sp_consultar_alertas_activas(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_alertas_activas(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF p_id_terapeuta IS NULL THEN
+        OPEN p_cursor FOR
+            SELECT id_alerta, tipo_alerta, descripcion, paciente, terapeuta_notificado, fecha_generacion
+            FROM public.vw_alertas_activas;
+    ELSE
+        OPEN p_cursor FOR
+            SELECT v.id_alerta, v.tipo_alerta, v.descripcion, v.paciente,
+                   v.terapeuta_notificado, v.fecha_generacion
+            FROM public.vw_alertas_activas v
+            JOIN public.alerta a ON v.id_alerta = a.id_alerta
+            WHERE a.id_terapeuta = p_id_terapeuta
+            ORDER BY v.fecha_generacion DESC;
+    END IF;
+
+    p_mensaje := 'Alertas activas recuperadas desde vw_alertas_activas.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar alertas activas: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_alertas_activas(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
 -- Name: sp_consultar_asignaciones_terapeuta(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
 --
 
@@ -323,6 +599,78 @@ $$;
 
 
 ALTER PROCEDURE public.sp_consultar_asignaciones_vigentes(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_consultar_auditoria(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_auditoria(IN p_limite integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT id_auditoria, fecha_hora, usuario_responsable, accion, modulo,
+               nombre_tabla_afectada, direccion_ip, resultado
+        FROM public.vw_reporte_auditoria
+        LIMIT COALESCE(NULLIF(p_limite, 0), 100);
+
+    p_mensaje := 'Bitácora de auditoría recuperada desde vw_reporte_auditoria.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar auditoría: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_auditoria(IN p_limite integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_consultar_directorio_pacientes(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_directorio_pacientes(INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT id_paciente, nombre_completo, telefono, correo, estatus_cuenta, fecha_registro
+        FROM public.vw_directorio_pacientes
+        ORDER BY id_paciente ASC;
+
+    p_mensaje := 'Directorio de pacientes recuperado desde vw_directorio_pacientes.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar vw_directorio_pacientes: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_directorio_pacientes(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_consultar_directorio_terapeutas(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_directorio_terapeutas(INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT id_terapeuta, nombre_terapeuta, cedula_profesional,
+               COALESCE(especialidades, 'Sin especialidad asignada') AS especialidades,
+               estatus
+        FROM public.vw_directorio_terapeutas
+        ORDER BY nombre_terapeuta ASC;
+
+    p_mensaje := 'Directorio de terapeutas recuperado desde vw_directorio_terapeutas.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar vw_directorio_terapeutas: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_directorio_terapeutas(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_consultar_especialidades(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -472,6 +820,77 @@ $$;
 
 
 ALTER PROCEDURE public.sp_consultar_pacientes(IN p_id_estado integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_consultar_progreso_clinico(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_progreso_clinico(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF p_id_terapeuta IS NULL THEN
+        OPEN p_cursor FOR
+            SELECT paciente, objetivo_terapeutico, estado_objetivo,
+                   COALESCE(avance_actual, 0.00) AS avance_actual,
+                   ultima_actualizacion, COALESCE(comentario, 'Sin comentarios') AS comentario
+            FROM public.vw_progreso_clinico
+            ORDER BY paciente ASC, objetivo_terapeutico ASC;
+    ELSE
+        OPEN p_cursor FOR
+            SELECT DISTINCT v.paciente, v.objetivo_terapeutico, v.estado_objetivo,
+                   COALESCE(v.avance_actual, 0.00) AS avance_actual,
+                   v.ultima_actualizacion, COALESCE(v.comentario, 'Sin comentarios') AS comentario
+            FROM public.vw_progreso_clinico v
+            JOIN public.objetivo o ON o.nombre = v.objetivo_terapeutico
+            JOIN public.plan_terapeutico pt ON o.id_plan = pt.id_plan
+            JOIN public.asignacion_terapeuta_paciente a ON pt.id_asignacion = a.id_asignacion
+            WHERE a.id_terapeuta = p_id_terapeuta
+            ORDER BY v.paciente ASC, v.objetivo_terapeutico ASC;
+    END IF;
+
+    p_mensaje := 'Progreso clínico recuperado desde vw_progreso_clinico.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar progreso clínico: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_progreso_clinico(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_consultar_resultados_instrumentos(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_resultados_instrumentos(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF p_id_terapeuta IS NULL THEN
+        OPEN p_cursor FOR
+            SELECT id_aplicacion, instrumento, paciente, dimension_evaluada,
+                   puntuacion_bruta, fecha_respuesta
+            FROM public.vw_resultados_instrumentos;
+    ELSE
+        OPEN p_cursor FOR
+            SELECT v.id_aplicacion, v.instrumento, v.paciente, v.dimension_evaluada,
+                   v.puntuacion_bruta, v.fecha_respuesta
+            FROM public.vw_resultados_instrumentos v
+            JOIN public.aplicacion_instrumento ai ON v.id_aplicacion = ai.id_aplicacion
+            WHERE ai.id_terapeuta = p_id_terapeuta
+            ORDER BY v.fecha_respuesta DESC;
+    END IF;
+
+    p_mensaje := 'Resultados de instrumentos recuperados desde vw_resultados_instrumentos.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al consultar resultados de instrumentos: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_resultados_instrumentos(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_consultar_sesiones_paciente(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -643,6 +1062,26 @@ $$;
 
 
 ALTER PROCEDURE public.sp_dashboard_metricas(IN p_id_estado integer, OUT p_total_pacientes integer, OUT p_total_terapeutas integer, OUT p_sesiones_hoy integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_establecer_contexto_auditoria(integer, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_establecer_contexto_auditoria(IN p_id_usuario integer, IN p_ip character varying, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM set_config('app.current_user_id', COALESCE(p_id_usuario::text, ''), true);
+    PERFORM set_config('app.client_ip', COALESCE(p_ip, '127.0.0.1'), true);
+    p_mensaje := 'Contexto de auditoría configurado.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al configurar contexto de auditoría: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_establecer_contexto_auditoria(IN p_id_usuario integer, IN p_ip character varying, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_listar_pacientes_sin_asignar(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -927,6 +1366,296 @@ $$;
 
 
 ALTER PROCEDURE public.sp_registrar_terapeuta(IN p_correo character varying, IN p_password_hash character varying, IN p_nombre character varying, IN p_ap_pat character varying, IN p_ap_mat character varying, IN p_cedula character varying, OUT p_id_nuevo integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_reporte_avance_planes(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_reporte_avance_planes(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DROP TABLE IF EXISTS pg_temp.tmp_avance_planes;
+
+    CREATE TEMP TABLE tmp_avance_planes (
+        id_plan integer,
+        paciente text,
+        terapeuta text,
+        estado_plan character varying(50),
+        total_objetivos integer,
+        objetivos_logrados integer,
+        promedio_avance numeric(5,2),
+        fecha_inicio date
+    ) ON COMMIT DROP;
+
+    INSERT INTO tmp_avance_planes
+    WITH ultimo_historial AS (
+        SELECT DISTINCT ON (id_objetivo)
+            id_objetivo,
+            porcentaje_avance_registrado
+        FROM public.historial_objetivo
+        ORDER BY id_objetivo, fecha_registro DESC
+    )
+    SELECT
+        pt.id_plan,
+        p.nombre || ' ' || p.apellido_paterno AS paciente,
+        t.nombre || ' ' || t.apellido_paterno AS terapeuta,
+        ep.nombre AS estado_plan,
+        COUNT(o.id_objetivo) AS total_objetivos,
+        COUNT(CASE WHEN o.id_estado_objetivo = 2 THEN 1 END) AS objetivos_logrados,
+        ROUND(COALESCE(AVG(COALESCE(uh.porcentaje_avance_registrado, 0)), 0), 2) AS promedio_avance,
+        pt.fecha_inicio
+    FROM public.plan_terapeutico pt
+    JOIN public.estado_plan ep ON pt.id_estado_plan = ep.id_estado_plan
+    JOIN public.asignacion_terapeuta_paciente a ON pt.id_asignacion = a.id_asignacion
+    JOIN public.paciente p ON a.id_paciente = p.id_paciente
+    JOIN public.terapeuta t ON a.id_terapeuta = t.id_terapeuta
+    LEFT JOIN public.objetivo o ON pt.id_plan = o.id_plan
+    LEFT JOIN ultimo_historial uh ON o.id_objetivo = uh.id_objetivo
+    WHERE (p_id_terapeuta IS NULL OR a.id_terapeuta = p_id_terapeuta)
+    GROUP BY pt.id_plan, p.nombre, p.apellido_paterno, t.nombre, t.apellido_paterno, ep.nombre, pt.fecha_inicio;
+
+    OPEN p_cursor FOR
+        SELECT
+            id_plan,
+            paciente,
+            terapeuta,
+            estado_plan,
+            total_objetivos,
+            objetivos_logrados,
+            promedio_avance,
+            fecha_inicio
+        FROM tmp_avance_planes
+        ORDER BY promedio_avance DESC, id_plan ASC;
+
+    p_mensaje := 'Avance de planes terapéuticos consolidado mediante tabla temporal.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error en sp_reporte_avance_planes: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_reporte_avance_planes(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_reporte_evolucion_longitudinal(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_reporte_evolucion_longitudinal(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DROP TABLE IF EXISTS pg_temp.tmp_evolucion_longitudinal;
+
+    CREATE TEMP TABLE tmp_evolucion_longitudinal (
+        id_paciente integer,
+        paciente text,
+        instrumento character varying(150),
+        dimension character varying(100),
+        fecha_respuesta timestamp without time zone,
+        puntuacion numeric(10,2),
+        puntuacion_previa numeric(10,2),
+        delta_cambio numeric(10,2),
+        promedio_historico numeric(10,2)
+    ) ON COMMIT DROP;
+
+    INSERT INTO tmp_evolucion_longitudinal
+    SELECT
+        ai.id_paciente,
+        v.paciente,
+        v.instrumento,
+        v.dimension_evaluada,
+        v.fecha_respuesta,
+        v.puntuacion_bruta,
+        LAG(v.puntuacion_bruta) OVER (
+            PARTITION BY ai.id_paciente, v.instrumento, v.dimension_evaluada
+            ORDER BY v.fecha_respuesta ASC
+        ) AS puntuacion_previa,
+        v.puntuacion_bruta - LAG(v.puntuacion_bruta) OVER (
+            PARTITION BY ai.id_paciente, v.instrumento, v.dimension_evaluada
+            ORDER BY v.fecha_respuesta ASC
+        ) AS delta_cambio,
+        ROUND(
+            AVG(v.puntuacion_bruta) OVER (
+                PARTITION BY ai.id_paciente, v.instrumento, v.dimension_evaluada
+            ),
+            2
+        ) AS promedio_historico
+    FROM public.vw_resultados_instrumentos v
+    JOIN public.aplicacion_instrumento ai ON v.id_aplicacion = ai.id_aplicacion
+    WHERE (p_id_terapeuta IS NULL OR ai.id_terapeuta = p_id_terapeuta);
+
+    OPEN p_cursor FOR
+        SELECT
+            paciente,
+            instrumento,
+            dimension,
+            fecha_respuesta,
+            puntuacion,
+            puntuacion_previa,
+            delta_cambio,
+            promedio_historico,
+            CASE
+                WHEN delta_cambio IS NULL THEN 'Línea Base'
+                WHEN delta_cambio <= -3.00 THEN 'Mejoría Relevante'
+                WHEN delta_cambio >= 3.00 THEN 'Alerta de Deterioro'
+                ELSE 'Estable'
+            END AS clasificacion_cambio
+        FROM tmp_evolucion_longitudinal
+        ORDER BY fecha_respuesta DESC, paciente ASC;
+
+    p_mensaje := 'Evolución longitudinal calculada mediante tabla temporal y funciones de ventana.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error en sp_reporte_evolucion_longitudinal: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_reporte_evolucion_longitudinal(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_reporte_indicadores_anonimizados(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_reporte_indicadores_anonimizados(INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DROP TABLE IF EXISTS pg_temp.tmp_indicadores_anon;
+
+    CREATE TEMP TABLE tmp_indicadores_anon (
+        rango_etario text,
+        modalidad character varying(50),
+        pacientes_unicos integer,
+        total_sesiones integer,
+        pct_completadas numeric(5,2),
+        promedio_escala numeric(5,2)
+    ) ON COMMIT DROP;
+
+    INSERT INTO tmp_indicadores_anon
+    WITH pacientes_cohorte AS (
+        SELECT
+            id_paciente,
+            CASE
+                WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, fecha_nacimiento)) < 26 THEN '18-25 años'
+                WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, fecha_nacimiento)) BETWEEN 26 AND 35 THEN '26-35 años'
+                WHEN EXTRACT(YEAR FROM AGE(CURRENT_DATE, fecha_nacimiento)) BETWEEN 36 AND 50 THEN '36-50 años'
+                ELSE '51+ años'
+            END AS rango_etario
+        FROM public.paciente
+        WHERE id_estado_paciente = 1
+    ),
+    promedio_paciente AS (
+        SELECT ai.id_paciente, AVG(ri.puntuacion_bruta) AS prom_bruto
+        FROM public.aplicacion_instrumento ai
+        JOIN public.resultado_instrumento ri ON ai.id_aplicacion = ri.id_aplicacion
+        GROUP BY ai.id_paciente
+    )
+    SELECT
+        pc.rango_etario,
+        m.nombre AS modalidad,
+        COUNT(DISTINCT pc.id_paciente) AS pacientes_unicos,
+        COUNT(s.id_sesion) AS total_sesiones,
+        CASE
+            WHEN COUNT(s.id_sesion) = 0 THEN 0.00
+            ELSE ROUND((COUNT(CASE WHEN s.id_estado_sesion = 2 THEN 1 END)::numeric * 100.0) / COUNT(s.id_sesion), 2)
+        END AS pct_completadas,
+        ROUND(COALESCE(AVG(pp.prom_bruto), 0), 2) AS promedio_escala
+    FROM pacientes_cohorte pc
+    JOIN public.asignacion_terapeuta_paciente a ON pc.id_paciente = a.id_paciente
+    JOIN public.sesion s ON a.id_asignacion = s.id_asignacion
+    JOIN public.modalidad_sesion m ON s.id_modalidad = m.id_modalidad
+    LEFT JOIN promedio_paciente pp ON pc.id_paciente = pp.id_paciente
+    GROUP BY pc.rango_etario, m.nombre;
+
+    OPEN p_cursor FOR
+        SELECT
+            rango_etario,
+            modalidad,
+            pacientes_unicos,
+            total_sesiones,
+            pct_completadas,
+            promedio_escala
+        FROM tmp_indicadores_anon
+        ORDER BY rango_etario ASC, modalidad ASC;
+
+    p_mensaje := 'Indicadores anonimizados generados mediante tabla temporal (sin exposición de PII).';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error en sp_reporte_indicadores_anonimizados: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_reporte_indicadores_anonimizados(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_reporte_ranking_terapeutas(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_reporte_ranking_terapeutas(INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DROP TABLE IF EXISTS pg_temp.tmp_ranking_terapeutas;
+
+    CREATE TEMP TABLE tmp_ranking_terapeutas (
+        id_terapeuta integer,
+        terapeuta text,
+        cedula character varying(50),
+        especialidades text,
+        pacientes_activos integer,
+        total_sesiones integer,
+        completadas integer,
+        canceladas integer,
+        tasa_cumplimiento numeric(5,2)
+    ) ON COMMIT DROP;
+
+    INSERT INTO tmp_ranking_terapeutas
+    SELECT
+        dt.id_terapeuta,
+        dt.nombre_terapeuta,
+        dt.cedula_profesional,
+        COALESCE(dt.especialidades, 'General'),
+        COUNT(DISTINCT CASE WHEN a.id_estado_asignacion = 1 THEN a.id_paciente END) AS pacientes_activos,
+        COUNT(s.id_sesion) AS total_sesiones,
+        COUNT(CASE WHEN s.id_estado_sesion = 2 THEN 1 END) AS completadas,
+        COUNT(CASE WHEN s.id_estado_sesion = 3 THEN 1 END) AS canceladas,
+        CASE
+            WHEN COUNT(s.id_sesion) = 0 THEN 0.00
+            ELSE ROUND((COUNT(CASE WHEN s.id_estado_sesion = 2 THEN 1 END)::numeric * 100.0) / COUNT(s.id_sesion), 2)
+        END AS tasa_cumplimiento
+    FROM public.vw_directorio_terapeutas dt
+    LEFT JOIN public.asignacion_terapeuta_paciente a ON dt.id_terapeuta = a.id_terapeuta
+    LEFT JOIN public.sesion s ON a.id_asignacion = s.id_asignacion
+    WHERE dt.estatus = 'Activo'
+    GROUP BY dt.id_terapeuta, dt.nombre_terapeuta, dt.cedula_profesional, dt.especialidades;
+
+    OPEN p_cursor FOR
+        SELECT
+            RANK() OVER (ORDER BY tasa_cumplimiento DESC, completadas DESC, pacientes_activos DESC) AS posicion,
+            terapeuta,
+            cedula,
+            especialidades,
+            pacientes_activos,
+            total_sesiones,
+            completadas,
+            canceladas,
+            tasa_cumplimiento
+        FROM tmp_ranking_terapeutas
+        ORDER BY posicion ASC, terapeuta ASC;
+
+    p_mensaje := 'Ranking de terapeutas calculado mediante tabla temporal.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error en sp_reporte_ranking_terapeutas: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_reporte_ranking_terapeutas(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_reprogramar_sesion(integer, date, time without time zone, time without time zone); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -1942,7 +2671,8 @@ CREATE TABLE public.sesion (
     fecha date NOT NULL,
     hora_inicio time without time zone NOT NULL,
     hora_fin time without time zone NOT NULL,
-    fecha_creacion timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    fecha_creacion timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_sesion_horario_valido CHECK ((hora_fin > hora_inicio))
 );
 
 
@@ -2459,6 +3189,17 @@ ALTER TABLE ONLY public.usuario ALTER COLUMN id_usuario SET DEFAULT nextval('pub
 --
 
 COPY public.alerta (id_alerta, id_paciente, id_terapeuta, id_tipo_alerta, descripcion, fecha_generacion, atendida) FROM stdin;
+1	1	1	1	Puntuación elevada detectada automáticamente (17.00 pts) en PHQ-9 (Depresión) — dimensión "Ánimo Depresivo Global" (aplicación #1). Requiere revisión terapéutica.	2026-11-26 20:06:07.179396	f
+2	2	1	1	Puntuación elevada detectada automáticamente (16.00 pts) en GAD-7 (Ansiedad) — dimensión "Ansiedad Cognitiva" (aplicación #4). Requiere revisión terapéutica.	2026-11-26 20:06:07.179396	f
+3	3	1	1	Puntuación elevada detectada automáticamente (19.00 pts) en PSS-10 (Estrés Percibido) — dimensión "Estrés Cotidiano" (aplicación #7). Requiere revisión terapéutica.	2026-11-26 20:06:07.179396	f
+4	4	2	1	Puntuación elevada detectada automáticamente (15.00 pts) en GAD-7 (Ansiedad) — dimensión "Ansiedad Cognitiva" (aplicación #8). Requiere revisión terapéutica.	2026-11-26 20:06:07.179396	f
+5	5	2	1	Puntuación elevada detectada automáticamente (18.00 pts) en PHQ-9 (Depresión) — dimensión "Ánimo Depresivo Global" (aplicación #11). Requiere revisión terapéutica.	2026-11-26 20:06:07.179396	f
+6	29	11	1	Puntuación elevada detectada automáticamente (16.00 pts) en GAD-7 (Ansiedad) — dimensión "Ansiedad Cognitiva" (aplicación #13). Requiere revisión terapéutica.	2026-11-26 20:06:07.179396	f
+7	33	11	1	Puntuación elevada detectada automáticamente (15.00 pts) en PHQ-9 (Depresión) — dimensión "Ánimo Depresivo Global" (aplicación #15). Requiere revisión terapéutica.	2026-11-26 20:06:07.179396	f
+8	3	1	3	Sesión cancelada consecutiva; confirmar disponibilidad para reprogramación.	2026-11-26 20:06:07.179396	f
+9	6	2	4	Objetivo de elaboración de duelo sin actualización en los últimos 21 días.	2026-11-26 20:06:07.179396	f
+10	8	3	5	Revisar adherencia a desconexión digital en la próxima cita programada.	2026-11-26 20:06:07.179396	f
+11	29	11	5	Validar respuesta positiva tras reducción de ansiedad en evaluación GAD-7.	2026-11-26 20:06:07.179396	f
 \.
 
 
@@ -2467,6 +3208,22 @@ COPY public.alerta (id_alerta, id_paciente, id_terapeuta, id_tipo_alerta, descri
 --
 
 COPY public.aplicacion_instrumento (id_aplicacion, id_instrumento, id_paciente, id_terapeuta, fecha_asignacion, fecha_respuesta, estado, id_documento_mongo) FROM stdin;
+1	1	1	1	2026-08-05 09:00:00	2026-08-05 18:00:00	Completada	\N
+2	1	1	1	2026-08-19 09:00:00	2026-08-19 19:00:00	Completada	\N
+3	1	1	1	2026-09-02 09:00:00	2026-09-02 18:30:00	Completada	\N
+4	2	2	1	2026-08-06 10:00:00	2026-08-06 17:00:00	Completada	\N
+5	2	2	1	2026-08-20 10:00:00	2026-08-20 17:30:00	Completada	\N
+6	3	3	1	2026-08-07 15:00:00	2026-08-07 20:00:00	Completada	\N
+7	3	3	1	2026-08-21 15:00:00	2026-08-21 20:15:00	Completada	\N
+8	2	4	2	2026-08-10 08:30:00	2026-08-10 14:00:00	Completada	\N
+9	2	4	2	2026-08-24 08:30:00	2026-08-24 14:30:00	Completada	\N
+10	1	5	2	2026-08-11 09:30:00	2026-08-11 16:00:00	Completada	\N
+11	1	5	2	2026-08-25 09:30:00	2026-08-25 16:10:00	Completada	\N
+12	4	7	3	2026-08-15 15:00:00	2026-08-15 19:00:00	Completada	\N
+13	2	29	11	2026-10-19 10:00:00	2026-10-19 18:00:00	Completada	\N
+14	2	29	11	2026-11-02 10:00:00	2026-11-02 18:30:00	Completada	\N
+15	1	33	11	2026-10-20 11:00:00	2026-10-20 19:00:00	Completada	\N
+16	1	33	11	2026-11-03 11:00:00	2026-11-03 19:15:00	Completada	\N
 \.
 
 
@@ -2513,6 +3270,37 @@ COPY public.asignacion_terapeuta_paciente (id_asignacion, id_terapeuta, id_pacie
 --
 
 COPY public.auditoria (id_auditoria, id_usuario, accion, modulo, nombre_tabla_afectada, id_registro, fecha_hora, direccion_ip, resultado) FROM stdin;
+1	1	INSERT	Planes Terapéuticos	plan_terapeutico	1	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+2	1	INSERT	Planes Terapéuticos	plan_terapeutico	2	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+3	1	INSERT	Planes Terapéuticos	plan_terapeutico	3	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+4	1	INSERT	Planes Terapéuticos	plan_terapeutico	4	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+5	1	INSERT	Planes Terapéuticos	plan_terapeutico	5	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+6	1	INSERT	Planes Terapéuticos	plan_terapeutico	6	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+7	1	INSERT	Planes Terapéuticos	plan_terapeutico	7	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+8	1	INSERT	Planes Terapéuticos	plan_terapeutico	8	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+9	1	INSERT	Planes Terapéuticos	plan_terapeutico	9	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+10	1	INSERT	Planes Terapéuticos	plan_terapeutico	10	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+11	1	INSERT	Planes Terapéuticos	plan_terapeutico	11	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+12	1	INSERT	Planes Terapéuticos	plan_terapeutico	12	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+13	1	INSERT	Objetivos	objetivo	1	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+14	1	INSERT	Objetivos	objetivo	2	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+15	1	INSERT	Objetivos	objetivo	3	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+16	1	INSERT	Objetivos	objetivo	4	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+17	1	INSERT	Objetivos	objetivo	5	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+18	1	INSERT	Objetivos	objetivo	6	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+19	1	INSERT	Objetivos	objetivo	7	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+20	1	INSERT	Objetivos	objetivo	8	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+21	1	INSERT	Objetivos	objetivo	9	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+22	1	INSERT	Objetivos	objetivo	10	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+23	1	INSERT	Objetivos	objetivo	11	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+24	1	INSERT	Objetivos	objetivo	12	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+25	1	INSERT	Objetivos	objetivo	13	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+26	1	INSERT	Objetivos	objetivo	14	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+27	1	INSERT	Objetivos	objetivo	15	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+28	1	INSERT	Objetivos	objetivo	16	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+29	1	UPDATE	Objetivos	objetivo	1	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+30	1	UPDATE	Objetivos	objetivo	5	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
+31	1	UPDATE	Planes Terapéuticos	plan_terapeutico	3	2026-11-26 20:06:07.179396	127.0.0.1	EXITO
 \.
 
 
@@ -2521,6 +3309,16 @@ COPY public.auditoria (id_auditoria, id_usuario, accion, modulo, nombre_tabla_af
 --
 
 COPY public.dimension_instrumento (id_dimension, id_instrumento, nombre_dimension) FROM stdin;
+1	1	Ánimo Depresivo Global
+2	1	Anhedonia y Energía
+3	1	Alteración de Sueño
+4	2	Ansiedad Cognitiva
+5	2	Tensión Somática
+6	3	Estrés Cotidiano
+7	3	Sobrecarga Emocional
+8	3	Afrontamiento Percibido
+9	4	Vitalidad Diaria
+10	4	Calidad de Descanso
 \.
 
 
@@ -2620,6 +3418,30 @@ COPY public.estado_usuario (id_estado_usuario, nombre_estado) FROM stdin;
 --
 
 COPY public.historial_objetivo (id_historial, id_objetivo, porcentaje_avance_registrado, fecha_registro, comentario, registrado_por) FROM stdin;
+1	1	25.00	2026-08-19 10:50:00	Se establecieron horarios base de descanso entre semana.	2
+2	1	65.00	2026-09-02 10:50:00	Cumplimiento de 4 noches constantes; menor latencia de sueño.	2
+3	1	100.00	2026-09-23 10:50:00	Meta consolidada durante 3 semanas seguidas.	2
+4	2	30.00	2026-08-26 10:55:00	Primeros registros completos de pensamientos automáticos.	2
+5	2	70.00	2026-09-16 10:55:00	Aplica reencuadre autónomo antes de reuniones críticas.	2
+6	3	40.00	2026-08-20 11:50:00	Inició caminatas matutinas 2 días por semana.	2
+7	3	80.00	2026-09-10 11:50:00	Mantiene 3 actividades semanales y reporta mejor energía.	2
+8	4	35.00	2026-08-27 11:55:00	Practica respiración guiada antes de cenar.	2
+9	5	50.00	2026-08-28 16:50:00	Uso de matriz de prioridades redujo entregas de último minuto.	2
+10	5	100.00	2026-09-18 16:50:00	Logro completo del objetivo y cierre exitoso del plan 3.	2
+11	6	45.00	2026-08-24 09:50:00	Primera conversación asertiva exitosa con su equipo.	3
+12	6	85.00	2026-09-14 09:50:00	Mantiene límites saludables sin escalamiento emocional.	3
+13	7	50.00	2026-08-25 10:50:00	Completa 5 días/semana de mindfulness guiado.	3
+14	7	90.00	2026-09-15 10:50:00	Disminución notable en episodios de inquietud diurna.	3
+15	8	40.00	2026-08-26 11:50:00	Apertura emocional constante en sesiones y bitácora.	3
+16	9	55.00	2026-08-29 16:50:00	Reconoce autocrítica temprana y la reformula.	4
+17	10	60.00	2026-08-30 17:50:00	Reduce uso de celular nocturno 4 noches por semana.	4
+18	11	50.00	2026-09-01 18:50:00	Primera reunión familiar estructurada con acuerdos escritos.	4
+19	12	75.00	2026-09-03 09:50:00	Pausas activas integradas en calendario laboral.	5
+20	13	30.00	2026-10-25 15:00:00	Asistió a evento breve con manejo adecuado de respiración.	50
+21	14	60.00	2026-11-01 15:00:00	Completó 4 registros semanales en bitácora emocional.	50
+22	15	45.00	2026-10-26 15:10:00	Aplica respiración 4-7-8 en momentos de presión laboral.	50
+23	15	75.00	2026-11-09 15:10:00	Reporta recuperación más rápida tras jornadas demandantes.	50
+24	16	50.00	2026-11-09 15:15:00	Respondió evaluación inicial y seguimiento quincenal.	50
 \.
 
 
@@ -2628,6 +3450,10 @@ COPY public.historial_objetivo (id_historial, id_objetivo, porcentaje_avance_reg
 --
 
 COPY public.instrumento (id_instrumento, nombre, descripcion, estado, version, fecha_creacion) FROM stdin;
+1	PHQ-9 (Depresión)	Cuestionario simulado de 9 ítems para seguimiento longitudinal de síntomas depresivos (0-27).	Activo	v1.0	2026-11-26 20:06:07.179396
+2	GAD-7 (Ansiedad)	Escala simulada de 7 ítems para evaluación de ansiedad generalizada (0-21).	Activo	v1.0	2026-11-26 20:06:07.179396
+3	PSS-10 (Estrés Percibido)	Escala simulada de percepción de estrés cotidiano y afrontamiento (0-40).	Activo	v1.0	2026-11-26 20:06:07.179396
+4	WHO-5 (Bienestar)	Índice simulado de bienestar emocional positivo y vitalidad (0-25).	Activo	v1.0	2026-11-26 20:06:07.179396
 \.
 
 
@@ -2646,6 +3472,22 @@ COPY public.modalidad_sesion (id_modalidad, nombre) FROM stdin;
 --
 
 COPY public.objetivo (id_objetivo, id_plan, id_estado_objetivo, nombre, descripcion, fecha_inicio, fecha_meta) FROM stdin;
+2	1	1	Registro diario de pensamientos automáticos	Identificar detonantes de ansiedad y aplicar reencuadre cognitivo.	2026-08-05	2026-12-15
+3	2	1	Rutina de activación conductual	Realizar 3 actividades placenteras o físicas estructuradas por semana.	2026-08-06	2026-11-20
+4	2	1	Reducción de rumiación vespertina	Aplicar técnicas de respiración diafragmática y registro de cierre diario.	2026-08-13	2026-12-10
+6	4	1	Comunicación asertiva en entorno laboral	Practicar peticiones claras y límites sin culpa en 2 situaciones semanales.	2026-08-10	2026-12-01
+7	5	1	Práctica guiada de atención plena	Completar 10 minutos diarios de mindfulness durante 6 semanas.	2026-08-11	2026-11-25
+8	6	1	Elaboración narrativa del duelo	Expresar emociones clave en bitácora semanal y revisar en sesión.	2026-08-12	2026-12-20
+9	7	1	Fortalecimiento de autodiálogo compasivo	Sustituir autocrítica rígida por afirmaciones realistas basadas en evidencia.	2026-08-15	2026-12-05
+10	8	1	Desconexión digital previa al descanso	Evitar pantallas 45 minutos antes de dormir.	2026-08-16	2026-11-18
+11	9	1	Acuerdos claros de convivencia familiar	Establecer una reunión semanal estructurada de comunicación familiar.	2026-08-17	2026-12-12
+12	10	1	Pausas de recuperación durante la jornada	Incorporar dos pausas de 10 minutos con estiramiento y respiración.	2026-08-18	2026-11-28
+13	11	1	Exposición gradual a eventos sociales	Asistir a una actividad grupal breve por semana aplicando técnicas de calma.	2026-10-18	2026-12-20
+14	11	1	Bitácora emocional de fin de día	Registrar intensidad emocional y estrategias utilizadas 4 veces por semana.	2026-10-18	2026-12-15
+15	12	1	Control de estrés ante alta demanda	Aplicar técnica de respiración 4-7-8 en picos de tensión laboral.	2026-10-18	2026-12-18
+16	12	1	Seguimiento quincenal con escalas psicométricas	Completar evaluaciones longitudinales PHQ-9 y GAD-7 en tiempo y forma.	2026-10-18	2026-12-22
+1	1	2	Higiene del sueño consistente	Mantener horario regular de descanso al menos 5 noches por semana.	2026-08-05	2026-11-30
+5	3	2	Planificación académica sin sobrecarga	Dividir entregables en bloques manejables con pausas activas.	2026-08-07	2026-11-15
 \.
 
 
@@ -2697,6 +3539,18 @@ COPY public.paciente (id_paciente, id_usuario, id_estado_paciente, nombre, apell
 --
 
 COPY public.permiso (id_permiso, nombre_permiso, modulo) FROM stdin;
+1	gestionar_pacientes	Pacientes
+2	gestionar_terapeutas	Terapeutas
+3	gestionar_asignaciones	Asignaciones
+4	ver_agenda_global	Sesiones
+5	gestionar_sesiones_propias	Sesiones
+6	ver_agenda_propia	Sesiones
+7	gestionar_planes_objetivos	Planes Terapéuticos
+8	aplicar_instrumentos	Instrumentos
+9	responder_instrumentos	Instrumentos
+10	gestionar_bitacora_propia	Bitácoras
+11	ver_alertas_clinicas	Alertas
+12	ver_auditoria_y_kpis	Auditoría
 \.
 
 
@@ -2705,6 +3559,18 @@ COPY public.permiso (id_permiso, nombre_permiso, modulo) FROM stdin;
 --
 
 COPY public.plan_terapeutico (id_plan, id_asignacion, id_estado_plan, fecha_inicio, fecha_fin, descripcion_general, fecha_creacion) FROM stdin;
+1	1	1	2026-08-05	\N	Intervención cognitivo-conductual para manejo de ansiedad laboral y regulación del sueño.	2026-11-26 20:06:07.179396
+2	2	1	2026-08-06	\N	Plan de activación conductual y reestructuración cognitiva ante episodios depresivos.	2026-11-26 20:06:07.179396
+4	4	1	2026-08-10	\N	Terapia enfocada en habilidades de comunicación asertiva y límites saludables.	2026-11-26 20:06:07.179396
+5	5	1	2026-08-11	\N	Abordaje de síntomas de ansiedad generalizada mediante exposición gradual y mindfulness.	2026-11-26 20:06:07.179396
+6	6	1	2026-08-12	\N	Plan de duelo y adaptación emocional tras cambios familiares recientes.	2026-11-26 20:06:07.179396
+7	7	1	2026-08-15	\N	Fortalecimiento de autoestima y regulación emocional en contexto universitario.	2026-11-26 20:06:07.179396
+8	8	1	2026-08-16	\N	Estrategias de afrontamiento ante insomnio crónico y rumiación nocturna.	2026-11-26 20:06:07.179396
+9	9	1	2026-08-17	\N	Intervención sistémica para mejora de dinámicas familiares y autocuidado.	2026-11-26 20:06:07.179396
+10	10	1	2026-08-18	\N	Plan de manejo de estrés post-proyecto y recuperación de hábitos saludables.	2026-11-26 20:06:07.179396
+11	29	1	2026-10-18	\N	Seguimiento terapéutico para regulación de ansiedad social y rutinas de bienestar.	2026-11-26 20:06:07.179396
+12	30	1	2026-10-18	\N	Evaluación longitudinal y fortalecimiento de estrategias de manejo de estrés.	2026-11-26 20:06:07.179396
+3	3	2	2026-08-07	2026-11-26	Acompañamiento para manejo del estrés académico y prevención de agotamiento.	2026-11-26 20:06:07.179396
 \.
 
 
@@ -2729,6 +3595,30 @@ COPY public.referencia_resumen (id_referencia, id_sesion, fecha_creacion, id_doc
 --
 
 COPY public.resultado_instrumento (id_resultado, id_aplicacion, id_dimension, puntuacion_bruta, fecha_calculo) FROM stdin;
+1	1	1	17.00	2026-08-05 18:05:00
+2	1	2	11.00	2026-08-05 18:05:00
+3	2	1	13.00	2026-08-19 19:05:00
+4	2	2	8.00	2026-08-19 19:05:00
+5	3	1	8.00	2026-09-02 18:35:00
+6	3	2	5.00	2026-09-02 18:35:00
+7	4	4	16.00	2026-08-06 17:05:00
+8	4	5	12.00	2026-08-06 17:05:00
+9	5	4	11.00	2026-08-20 17:35:00
+10	5	5	8.00	2026-08-20 17:35:00
+11	6	6	14.00	2026-08-07 20:05:00
+12	7	6	19.00	2026-08-21 20:20:00
+13	8	4	15.00	2026-08-10 14:05:00
+14	9	4	9.00	2026-08-24 14:35:00
+15	10	1	12.00	2026-08-11 16:05:00
+16	11	1	18.00	2026-08-25 16:15:00
+17	12	9	14.00	2026-08-15 19:05:00
+18	12	10	13.00	2026-08-15 19:05:00
+19	13	4	16.00	2026-10-19 18:05:00
+20	14	4	11.00	2026-11-02 18:35:00
+21	15	1	15.00	2026-10-20 19:05:00
+22	15	3	12.00	2026-10-20 19:05:00
+23	16	1	10.00	2026-11-03 19:20:00
+24	16	3	7.00	2026-11-03 19:20:00
 \.
 
 
@@ -2748,6 +3638,19 @@ COPY public.rol (id_rol, nombre, descripcion) FROM stdin;
 --
 
 COPY public.rol_permiso (id_rol, id_permiso) FROM stdin;
+1	1
+1	2
+1	3
+1	4
+1	11
+1	12
+2	5
+2	7
+2	8
+2	11
+3	6
+3	9
+3	10
 \.
 
 
@@ -2836,6 +3739,25 @@ COPY public.terapeuta (id_terapeuta, id_usuario, id_estado_terapeuta, nombre, ap
 --
 
 COPY public.terapeuta_especialidad (id_terapeuta, id_especialidad) FROM stdin;
+1	1
+1	2
+2	2
+2	5
+3	1
+3	3
+4	4
+4	6
+5	1
+5	7
+6	5
+6	9
+7	2
+7	8
+8	1
+9	9
+10	10
+11	1
+11	2
 \.
 
 
@@ -2844,6 +3766,11 @@ COPY public.terapeuta_especialidad (id_terapeuta, id_especialidad) FROM stdin;
 --
 
 COPY public.tipo_alerta (id_tipo_alerta, nombre, descripcion) FROM stdin;
+1	Riesgo Clínico Elevado	Puntuación psicométrica por encima del umbral moderado-alto (>= 15 pts).
+2	Incremento Sintomático	Aumento significativo respecto a la evaluación longitudinal previa.
+3	Inasistencia Reiterada	Cancelaciones consecutivas que comprometen la adherencia terapéutica.
+4	Objetivo Estancado	Objetivo terapéutico sin progreso registrado en más de 3 semanas.
+5	Seguimiento Prioritario	Requiere revisión clínica en la próxima sesión programada.
 \.
 
 
@@ -2852,7 +3779,6 @@ COPY public.tipo_alerta (id_tipo_alerta, nombre, descripcion) FROM stdin;
 --
 
 COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_hash, fecha_creacion, ultimo_acceso) FROM stdin;
-1	1	1	admin@clinica.com	scrypt:32768:8:1$nJed2mU8SQdyNIlR$3359d818734171072be58ed9f13662d9b1533ca3b7482108386750bb4efc0c0df7e1f46e05c2a929be02e5aa83cb5de1d96d4f33411c1c94ad4b9fb2632957ad	2026-10-17 19:55:18.010379	\N
 2	2	1	terapeuta1@clinica.com	scrypt:32768:8:1$ezLfDsNtl3CFnK8C$14e046aafffceb28fa160eb28abdd79f67f0acdfeb57b5f41a8d7003cf059ef00878cf726cd2d8339e21e757433f498b84288b36a8ef3ebed71b5092d8f3cec3	2026-10-17 19:55:18.010379	\N
 3	2	1	terapeuta2@clinica.com	scrypt:32768:8:1$PxcVSXxGX5PCnkVp$d63a437a5d208e81c5527cba85513b40b28fdd00c42457b4e34918b715ee468abfc991f671d16bf7be825c37ad57016246ea3ca87ea0101a1161fc3cbfacdca0	2026-10-17 19:55:18.010379	\N
 4	2	1	terapeuta3@clinica.com	scrypt:32768:8:1$8dKXygXAi4MUdzOO$031ec4a37527549d248e5cd585de77dc46b7def51b3eb9cfea1c7509f35ea392401907a0a37df6bd1f7046a1f8f74db601ec21e20d8a9843135d7b08a75b0d86	2026-10-17 19:55:18.010379	\N
@@ -2865,6 +3791,7 @@ COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_has
 11	2	1	terapeuta10@clinica.com	scrypt:32768:8:1$nXziezbpLltp91hT$038946bd69f533632f893d02036d108565d404967897d75436196834ad6a6107f15214a5c1a0cd104bb277e8adaf6e1ede2280ec30b6f928e1e4d4f8ede5c207	2026-10-17 19:55:18.010379	\N
 12	3	1	paciente1@correo.com	scrypt:32768:8:1$N32A2TxZzGOMBZlT$361faed09e0c6810cfd7fd231d3e97aca65c6800d337b6544d887bb617809a96355cc34884dcbb72a5f3416ca65c08a4bda4d2d65f01daf9bd688893e06dc34c	2026-10-17 19:55:18.010379	\N
 13	3	1	paciente2@correo.com	scrypt:32768:8:1$gPdkkEYKBCGB1F2v$23764701ea1403c171030b81d49a078e7ee146c6f8964b743a21db74ba437f0b2781b58b8807cf639c09a348d9c203f76ae9975defb546daaebea17af9ef9da9	2026-10-17 19:55:18.010379	\N
+1	1	1	admin@clinica.com	scrypt:32768:8:1$nJed2mU8SQdyNIlR$3359d818734171072be58ed9f13662d9b1533ca3b7482108386750bb4efc0c0df7e1f46e05c2a929be02e5aa83cb5de1d96d4f33411c1c94ad4b9fb2632957ad	2026-10-17 19:55:18.010379	2026-11-26 19:39:40.27518
 14	3	1	paciente3@correo.com	scrypt:32768:8:1$a2TONRnNhItZaVat$59b23c4ebec173702da48b5a16df6f0db0cecafe4481b2307befbe88a6041d2c4f4d513b9aa4b565ae7d2367c9a34244f63d541ee1d0a0f1c55e0348f4e149cf	2026-10-17 19:55:18.010379	\N
 15	3	1	paciente4@correo.com	scrypt:32768:8:1$Ga5MpM7IKmywdJfy$74183073a89781c15261c6c704e7e20ea948b8e8ef88c587f1a8ea65742c924a9e17af013011fc463e7bc3e80cb38507dea71c1689dc2ff771af8bd140990ff6	2026-10-17 19:55:18.010379	\N
 16	3	1	paciente5@correo.com	scrypt:32768:8:1$jAvE001JM0bGF2XL$1e709a2e15506e666c4c48f4594a5e29664402c389aeee6e7f6744898deb64ef0241a1b6499598efdd879cca5bc6463fb984b97523a7324e6a7f6dbfc25d9e1c	2026-10-17 19:55:18.010379	\N
@@ -2898,9 +3825,9 @@ COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_has
 46	2	1	zeus.fernando@gmail.com	scrypt:32768:8:1$gfNSUipAUjChgcXi$a87a0c0292ce19de18c17048c829fa8e07744e6340d5aeb7e47fd8b12d429b69f1a56241279e9ac292fc373cf75ca2363800f67e9db671e9e673bb9213ebed92	2026-10-18 03:05:44.988707	\N
 47	3	1	ce_aguilar@hotmail.com	scrypt:32768:8:1$z6clz8BuPzfmuhKd$c3d28d85331378f3664cf59bf0e21b61b990dc6e4d71bb8e1cbb8e77ed825b2bfdc984c8323b6fbb029a2d39e158bd991747b588bfb8ce5ec0d96f9b39344ac3	2026-10-18 03:08:25.882202	\N
 48	3	2	eduardo.aguilar@directlink.net.mx	scrypt:32768:8:1$28vHEWzqcAyOcrBt$cc8a44db8f8270c48167f57e9e9cf2a81927647e8a0f3402ef5dcbf14788674f08889faffdc6dbafacc9b7b10e2e41f9413959b736e5a377be559932e2d17220	2026-10-18 03:37:49.230778	\N
-50	2	1	paola.terapeuta@clinica.com	scrypt:32768:8:1$CGMEvwdI30D4WPyb$abdd0cc43bcfbdcf9c63236f3a269b7fdf584aa10fff8f7a075e9d0ee04deef62752d102c6a8c0aa504d5ced279c3ef3e2cfb6c1661ad6b4ed1bbe9d8aae93e6	2026-10-18 22:07:13.917424	\N
-51	3	1	carlos.paciente@clinica.com	scrypt:32768:8:1$pFvaN6CSan2V1Eg6$58c588d643ae437b3ea2be96c7740930127e9f4b87e5ae46f3b62349ea7abb2216cf86d5edbd6bf2e8f2a415d6ff84fe3d130c2ad2f63416e5f613f16b069766	2026-10-18 23:06:25.68	\N
 52	3	2	email@gmail.com	scrypt:32768:8:1$F3qnbKPJ1rW0UlEH$947e6f947d9078a28a173628524762a19121466f6d1497c9743e3213b483b5869100e487d55f26a6d222df6b174a2d3236f7829ffd61b6eb96902e9c33981770	2026-10-22 14:41:28.265484	\N
+50	2	1	paola.terapeuta@clinica.com	scrypt:32768:8:1$CGMEvwdI30D4WPyb$abdd0cc43bcfbdcf9c63236f3a269b7fdf584aa10fff8f7a075e9d0ee04deef62752d102c6a8c0aa504d5ced279c3ef3e2cfb6c1661ad6b4ed1bbe9d8aae93e6	2026-10-18 22:07:13.917424	2026-11-26 19:18:02.590892
+51	3	1	carlos.paciente@clinica.com	scrypt:32768:8:1$pFvaN6CSan2V1Eg6$58c588d643ae437b3ea2be96c7740930127e9f4b87e5ae46f3b62349ea7abb2216cf86d5edbd6bf2e8f2a415d6ff84fe3d130c2ad2f63416e5f613f16b069766	2026-10-18 23:06:25.68	2026-11-26 19:18:03.104756
 \.
 
 
@@ -2908,14 +3835,14 @@ COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_has
 -- Name: alerta_id_alerta_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.alerta_id_alerta_seq', 1, false);
+SELECT pg_catalog.setval('public.alerta_id_alerta_seq', 11, true);
 
 
 --
 -- Name: aplicacion_instrumento_id_aplicacion_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.aplicacion_instrumento_id_aplicacion_seq', 1, false);
+SELECT pg_catalog.setval('public.aplicacion_instrumento_id_aplicacion_seq', 16, true);
 
 
 --
@@ -2929,14 +3856,14 @@ SELECT pg_catalog.setval('public.asignacion_terapeuta_paciente_id_asignacion_seq
 -- Name: auditoria_id_auditoria_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.auditoria_id_auditoria_seq', 1, false);
+SELECT pg_catalog.setval('public.auditoria_id_auditoria_seq', 31, true);
 
 
 --
 -- Name: dimension_instrumento_id_dimension_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.dimension_instrumento_id_dimension_seq', 1, false);
+SELECT pg_catalog.setval('public.dimension_instrumento_id_dimension_seq', 10, true);
 
 
 --
@@ -2999,14 +3926,14 @@ SELECT pg_catalog.setval('public.estado_usuario_id_estado_usuario_seq', 2, true)
 -- Name: historial_objetivo_id_historial_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.historial_objetivo_id_historial_seq', 1, false);
+SELECT pg_catalog.setval('public.historial_objetivo_id_historial_seq', 24, true);
 
 
 --
 -- Name: instrumento_id_instrumento_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.instrumento_id_instrumento_seq', 1, false);
+SELECT pg_catalog.setval('public.instrumento_id_instrumento_seq', 4, true);
 
 
 --
@@ -3020,7 +3947,7 @@ SELECT pg_catalog.setval('public.modalidad_sesion_id_modalidad_seq', 2, true);
 -- Name: objetivo_id_objetivo_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.objetivo_id_objetivo_seq', 1, false);
+SELECT pg_catalog.setval('public.objetivo_id_objetivo_seq', 16, true);
 
 
 --
@@ -3034,14 +3961,14 @@ SELECT pg_catalog.setval('public.paciente_id_paciente_seq', 35, true);
 -- Name: permiso_id_permiso_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.permiso_id_permiso_seq', 1, false);
+SELECT pg_catalog.setval('public.permiso_id_permiso_seq', 12, true);
 
 
 --
 -- Name: plan_terapeutico_id_plan_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.plan_terapeutico_id_plan_seq', 1, false);
+SELECT pg_catalog.setval('public.plan_terapeutico_id_plan_seq', 12, true);
 
 
 --
@@ -3062,7 +3989,7 @@ SELECT pg_catalog.setval('public.referencia_resumen_id_referencia_seq', 1, false
 -- Name: resultado_instrumento_id_resultado_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.resultado_instrumento_id_resultado_seq', 1, false);
+SELECT pg_catalog.setval('public.resultado_instrumento_id_resultado_seq', 24, true);
 
 
 --
@@ -3090,7 +4017,7 @@ SELECT pg_catalog.setval('public.terapeuta_id_terapeuta_seq', 11, true);
 -- Name: tipo_alerta_id_tipo_alerta_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.tipo_alerta_id_tipo_alerta_seq', 1, false);
+SELECT pg_catalog.setval('public.tipo_alerta_id_tipo_alerta_seq', 6, true);
 
 
 --
@@ -3370,6 +4297,132 @@ ALTER TABLE ONLY public.usuario
 
 ALTER TABLE ONLY public.usuario
     ADD CONSTRAINT usuario_pkey PRIMARY KEY (id_usuario);
+
+
+--
+-- Name: idx_alerta_terapeuta_atendida; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_alerta_terapeuta_atendida ON public.alerta USING btree (id_terapeuta, atendida);
+
+
+--
+-- Name: idx_aplicacion_paciente_fecha; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_aplicacion_paciente_fecha ON public.aplicacion_instrumento USING btree (id_paciente, fecha_respuesta DESC);
+
+
+--
+-- Name: idx_asignacion_paciente_estado; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_asignacion_paciente_estado ON public.asignacion_terapeuta_paciente USING btree (id_paciente, id_estado_asignacion);
+
+
+--
+-- Name: idx_asignacion_terapeuta_estado; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_asignacion_terapeuta_estado ON public.asignacion_terapeuta_paciente USING btree (id_terapeuta, id_estado_asignacion);
+
+
+--
+-- Name: idx_auditoria_fecha_desc; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_auditoria_fecha_desc ON public.auditoria USING btree (fecha_hora DESC);
+
+
+--
+-- Name: idx_historial_objetivo_fecha; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_historial_objetivo_fecha ON public.historial_objetivo USING btree (id_objetivo, fecha_registro DESC);
+
+
+--
+-- Name: idx_resultado_aplicacion_dimension; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_resultado_aplicacion_dimension ON public.resultado_instrumento USING btree (id_aplicacion, id_dimension);
+
+
+--
+-- Name: idx_sesion_asignacion; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_sesion_asignacion ON public.sesion USING btree (id_asignacion);
+
+
+--
+-- Name: idx_sesion_fecha_estado; Type: INDEX; Schema: public; Owner: usuario
+--
+
+CREATE INDEX idx_sesion_fecha_estado ON public.sesion USING btree (fecha DESC, id_estado_sesion);
+
+
+--
+-- Name: resultado_instrumento trg_alerta_riesgo_instrumento; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_alerta_riesgo_instrumento AFTER INSERT ON public.resultado_instrumento FOR EACH ROW EXECUTE FUNCTION public.fn_alerta_riesgo_instrumento();
+
+
+--
+-- Name: asignacion_terapeuta_paciente trg_auditoria_asignacion; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_auditoria_asignacion AFTER INSERT OR UPDATE ON public.asignacion_terapeuta_paciente FOR EACH ROW EXECUTE FUNCTION public.fn_auditoria_clinica('Asignaciones', 'id_asignacion');
+
+
+--
+-- Name: objetivo trg_auditoria_objetivo; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_auditoria_objetivo AFTER INSERT OR UPDATE ON public.objetivo FOR EACH ROW EXECUTE FUNCTION public.fn_auditoria_clinica('Objetivos', 'id_objetivo');
+
+
+--
+-- Name: paciente trg_auditoria_paciente; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_auditoria_paciente AFTER INSERT OR UPDATE ON public.paciente FOR EACH ROW EXECUTE FUNCTION public.fn_auditoria_clinica('Pacientes', 'id_paciente');
+
+
+--
+-- Name: plan_terapeutico trg_auditoria_plan_terapeutico; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_auditoria_plan_terapeutico AFTER INSERT OR UPDATE ON public.plan_terapeutico FOR EACH ROW EXECUTE FUNCTION public.fn_auditoria_clinica('Planes Terapéuticos', 'id_plan');
+
+
+--
+-- Name: sesion trg_auditoria_sesion; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_auditoria_sesion AFTER INSERT OR UPDATE ON public.sesion FOR EACH ROW EXECUTE FUNCTION public.fn_auditoria_clinica('Sesiones', 'id_sesion');
+
+
+--
+-- Name: terapeuta trg_auditoria_terapeuta; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_auditoria_terapeuta AFTER INSERT OR UPDATE ON public.terapeuta FOR EACH ROW EXECUTE FUNCTION public.fn_auditoria_clinica('Terapeutas', 'id_terapeuta');
+
+
+--
+-- Name: historial_objetivo trg_progreso_reactivo_objetivo; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_progreso_reactivo_objetivo AFTER INSERT ON public.historial_objetivo FOR EACH ROW EXECUTE FUNCTION public.fn_progreso_reactivo_objetivo();
+
+
+--
+-- Name: sesion trg_validar_sesion_integridad; Type: TRIGGER; Schema: public; Owner: usuario
+--
+
+CREATE TRIGGER trg_validar_sesion_integridad BEFORE INSERT OR UPDATE ON public.sesion FOR EACH ROW EXECUTE FUNCTION public.fn_validar_sesion_integridad();
 
 
 --
@@ -3656,5 +4709,5 @@ ALTER TABLE ONLY public.usuario
 -- PostgreSQL database dump complete
 --
 
-\unrestrict PuNGCWdCibQriNAGAV9wSyijN7QJ0DkXpLXI8QCcswWTJhCWfpeTltFnHlCJVNA
+\unrestrict aTRv6KMRKGp5rbJAXPMgbDWluhEL1pu5ZmwHZVSoW5xGYK5d2EqLDhIcYVfU7LS
 

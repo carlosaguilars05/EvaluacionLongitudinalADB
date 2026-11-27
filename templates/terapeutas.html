@@ -18,6 +18,7 @@
                     <th>Apellido Paterno</th>
                     <th>Apellido Materno</th>
                     <th>Cédula Profesional</th>
+                    <th>Especialidades</th>
                     <th>Acciones</th>
                 </tr>
             </thead>
@@ -29,6 +30,7 @@
                     <td>{{ t[2] }}</td>
                     <td>{{ t[3] or '' }}</td>
                     <td>{{ t[4] }}</td>
+                    <td style="color: #475569; font-size: 0.9rem;">{{ EspecialidadesPorId.get(t[0], 'Sin especialidad asignada') }}</td>
                     <td style="display: flex; gap: 0.5rem;">
                         <a href="{{ url_for('editarTerapeuta', id_terapeuta=t[0]) }}" class="btn btn-editar">Editar</a>
                         <form action="{{ url_for('borrarTerapeuta', id_terapeuta=t[0]) }}" method="POST" style="display:inline;">
@@ -38,7 +40,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="6" style="text-align: center; color: #64748b;">No hay terapeutas activos registrados.</td>
+                    <td colspan="7" style="text-align: center; color: #64748b;">No hay terapeutas activos registrados.</td>
                 </tr>
                 {% endfor %}
             </tbody>

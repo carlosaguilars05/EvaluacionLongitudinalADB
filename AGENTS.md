@@ -94,10 +94,10 @@ Este archivo define las **reglas obligatorias de arquitectura, codificación, ba
 ## 2. Mapa Actual del Proyecto (Línea Base)
 
 ### Estructura de archivos
-- `app.py`: Monolito Flask (23 rutas + `@app.before_request` + `@rol_requerido`, `.env`, hashes Werkzeug).
-- `backup_BD.sql`: Respaldo PostgreSQL completo (30 tablas, 8 vistas `vw_*`, 39 SPs `sp_*`).
-- `sql/`: Scripts SQL versionados (`04_fase2_seguridad_sp.sql`, etc.).
-- `templates/`: Plantilla base `base.html` + 14 plantillas Jinja2 con aviso clínico obligatorio.
+- `app.py`: Monolito Flask organizado en 12 secciones (27 rutas + `@app.before_request` + `@rol_requerido`, `.env`, hashes Werkzeug).
+- `backup_BD.sql`: Respaldo PostgreSQL completo (30 tablas, 8 vistas `vw_*`, 51 SPs `sp_*` — 4 con tablas temporales —, 9 triggers `trg_*`).
+- `sql/`: Scripts SQL versionados (`01_indices_integridad.sql`, `03_triggers.sql`, `04_fase2_seguridad_sp.sql`, `04_fase3_sp_avanzados.sql`, `05_seed_data_fase3.sql`, `06_joins_y_consultas_avanzadas.sql`).
+- `templates/`: Plantilla base `base.html` + 17 plantillas Jinja2 (incluyendo `alertas.html`, `reportes.html`, `auditoria.html`) con aviso clínico obligatorio.
 - `static/css/estilos.css` y `static/js/`.
 - `scripts/`: `setup_db.ps1`, `export_backup.ps1`, `migrar_passwords_seed.py`.
 - `harness/verify_harness.py`: Verificador automatizado de reglas y progreso contra rúbrica.
@@ -111,17 +111,27 @@ Este archivo define las **reglas obligatorias de arquitectura, codificación, ba
 | `terapeuta_id` | Terapeuta (2) | ID en tabla `terapeuta` |
 | `paciente_id` | Paciente (3) | ID en tabla `paciente` |
 
-### Vistas existentes (`vw_*`) y su integración esperada vía SP
-| Vista | Estado actual | Integración objetivo en Flask (vía SP) |
+### Vistas existentes (`vw_*`) — 8 de 8 integradas desde Flask vía SP
+| Vista | Estado actual | Integración en Flask (vía SP) |
 | :--- | :--- | :--- |
 | `vw_agenda_global` | Integrada (`sp_consultar_agenda_*`) | `/sesiones` |
-| `vw_asignaciones_vigentes` | Integrada (`sp_consultar_asignaciones_vigentes`) | `/asignaciones`, `/nuevaSesion` |
-| `vw_directorio_pacientes` | Definida en BD | `/pacientes` y reportes |
-| `vw_directorio_terapeutas` | Definida en BD | `/terapeutas` y reportes |
-| `vw_progreso_clinico` | Definida en BD | `/planes` y `/reportes` |
-| `vw_alertas_activas` | Definida en BD | `/alertas` |
-| `vw_resultados_instrumentos` | Definida en BD | `/instrumentos` y `/seguimiento` |
-| `vw_reporte_auditoria` | Definida en BD | `/auditoria` (solo Admin) |
+| `vw_asignaciones_vigentes` | Integrada (`sp_consultar_asignaciones_*`) | `/asignaciones`, `/nuevaSesion` |
+| `vw_directorio_pacientes` | Integrada (`sp_consultar_directorio_pacientes`) | `/reportes?vista=directorio_pacientes` |
+| `vw_directorio_terapeutas` | Integrada (`sp_consultar_directorio_terapeutas`, `sp_reporte_ranking_terapeutas`) | `/terapeutas`, `/reportes?vista=directorio_terapeutas`, `/reportes?vista=ranking` |
+| `vw_progreso_clinico` | Integrada (`sp_consultar_progreso_clinico`) | `/reportes?vista=progreso` |
+| `vw_alertas_activas` | Integrada (`sp_consultar_alertas_activas`) | `/alertas` |
+| `vw_resultados_instrumentos` | Integrada (`sp_consultar_resultados_instrumentos`, `sp_reporte_evolucion_longitudinal`) | `/reportes?vista=instrumentos`, `/reportes?vista=evolucion` |
+| `vw_reporte_auditoria` | Integrada (`sp_consultar_auditoria`) | `/auditoria` (solo Admin) |
+
+### SPs con Tablas Temporales (`CREATE TEMP TABLE ... ON COMMIT DROP`)
+1. `sp_reporte_ranking_terapeutas`: Ranking con `RANK() OVER`, tasa de cumplimiento y carga por terapeuta.
+2. `sp_reporte_evolucion_longitudinal`: Evolución de instrumentos con `LAG()` y `AVG() OVER` por paciente/dimensión.
+3. `sp_reporte_avance_planes`: Consolidación de objetivos logrados y avance promedio por plan con CTE.
+4. `sp_reporte_indicadores_anonimizados`: KPIs agregados por cohorte etaria y modalidad sin exposición de PII.
+
+### Triggers activos en PostgreSQL (`sql/03_triggers.sql` — 9 triggers)
+- **Auditoría (6):** `trg_auditoria_paciente`, `trg_auditoria_terapeuta`, `trg_auditoria_asignacion`, `trg_auditoria_sesion`, `trg_auditoria_plan_terapeutico`, `trg_auditoria_objetivo` (`fn_auditoria_clinica`).
+- **Integridad y lógica reactiva (3):** `trg_validar_sesion_integridad`, `trg_alerta_riesgo_instrumento` (alerta automática si puntuación >= 15), `trg_progreso_reactivo_objetivo` (avance 100% marca objetivo Logrado y completa plan).
 
 ### Contratos posicionales críticos de SPs activos (resumen)
 - `sp_verificar_conexion`: `(ok, mensaje)`
@@ -137,10 +147,9 @@ Este archivo define las **reglas obligatorias de arquitectura, codificación, ba
 - `sp_consultar_agenda_*`: `(0: id_sesion, 1: fecha, 2: hora_inicio, 3: hora_fin, 4: modalidad, 5: estado_sesion, 6: terapeuta, 7: paciente)`
 - `sp_consultar_mis_pacientes`: `(0: id_paciente, 1: nombre, 2: ap_pat, 3: ap_mat, 4: fecha_nac, 5: sexo, 6: telefono)`
 
-### Pendientes de fases siguientes (Fases 3–7)
-- **Fase 3:** Triggers (`>= 5`: auditoría por entidad crítica + integridad/lógica reactiva), `>= 3` SPs con tablas temporales (`CREATE TEMP TABLE ... ON COMMIT DROP`), integración de todas las vistas `vw_*` desde Flask, datos semilla `>= 10` por dominio, y `sql/06_joins_y_consultas_avanzadas.sql`.
+### Pendientes de fases siguientes (Fases 4–7)
 - **Fase 4:** MongoDB (`>= 4` colecciones clínicas flexibles + coordinación con PostgreSQL).
-- **Fase 5:** Flujo completo de consulta/transcripción/Nota SOAP, planes terapéuticos, objetivos, cuestionarios psicométricos simulados, bitácoras emocionales, alertas y auditoría.
+- **Fase 5:** Flujo completo de consulta/transcripción/Nota SOAP, planes terapéuticos, objetivos, cuestionarios psicométricos simulados y bitácoras emocionales.
 - **Fase 6:** Pipeline ETL de preprocesamiento/análisis, tableros Highcharts (vía Jinja2 `| tojson`) y reportes descargables (CSV/XLSX/PDF).
 - **Fase 7:** Suite `pytest`, despliegue en Google Cloud Platform (Compute Engine + Cloud SQL + MongoDB Atlas) y `ubiquitous.udem.edu`, documentación final y paquete `.zip`/`.tar.gz`.
 
