@@ -6,7 +6,7 @@
 <div class="contenedor">
     <h1 style="color: #1e40af; margin-bottom: 0;">Bienvenido, {{ session.get('usuario_correo') }}</h1>
     <p style="color: #64748b; font-size: 1.05rem; margin-top: 0.5rem;">
-        Resumen general de los registros activos de la clínica al día de hoy.
+        Resumen general de los registros activos de la clínica al día de hoy (Arquitectura Híbrida PostgreSQL + MongoDB Atlas).
     </p>
 
     <div class="dashboard-grid">
@@ -29,6 +29,42 @@
             <h3>Citas para Hoy</h3>
             <div class="numero">{{ metricas.citas_hoy }}</div>
         </div>
+    </div>
+
+    <div style="margin-top: 2.25rem; padding-top: 1.5rem; border-top: 2px solid #e2e8f0;">
+        <div class="encabezado-seccion">
+            <div>
+                <h2 style="color: #1e3a8a; font-size: 1.25rem;">Repositorio Documental Clínico — MongoDB Atlas</h2>
+                <p class="subtitulo-fuente">
+                    {% if estado_mongo.ok %}
+                        <span class="badge badge-completada">Conectado</span> {{ estado_mongo.mensaje }}
+                    {% else %}
+                        <span class="badge badge-cancelada">Desconectado</span> {{ estado_mongo.mensaje }}
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+
+        {% if estado_mongo.ok %}
+        <div class="dashboard-grid" style="margin-top: 1.25rem;">
+            <div class="tarjeta-metrica" style="border-top-color: #0ea5e9; padding: 1.25rem;">
+                <h3>Cuestionarios e Instrumentos</h3>
+                <div class="numero" style="font-size: 2.4rem;">{{ estado_mongo.conteos.get('cuestionarios_instrumentos', 0) }}</div>
+            </div>
+            <div class="tarjeta-metrica" style="border-top-color: #0ea5e9; padding: 1.25rem;">
+                <h3>Bitácoras Emocionales</h3>
+                <div class="numero" style="font-size: 2.4rem;">{{ estado_mongo.conteos.get('bitacoras_emocionales', 0) }}</div>
+            </div>
+            <div class="tarjeta-metrica" style="border-top-color: #0ea5e9; padding: 1.25rem;">
+                <h3>Resúmenes SOAP</h3>
+                <div class="numero" style="font-size: 2.4rem;">{{ estado_mongo.conteos.get('resumenes_sesion_soap', 0) }}</div>
+            </div>
+            <div class="tarjeta-metrica" style="border-top-color: #0ea5e9; padding: 1.25rem;">
+                <h3>Historial de Ediciones</h3>
+                <div class="numero" style="font-size: 2.4rem;">{{ estado_mongo.conteos.get('historial_ediciones_clinicas', 0) }}</div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

@@ -220,6 +220,15 @@ def collect_defined_names(tree: ast.AST) -> Set[str]:
                     + ([node.args.kwarg] if node.args.kwarg else [])
                 ):
                     names.add(arg.arg)
+        elif isinstance(node, ast.Lambda):
+            for arg in (
+                node.args.posonlyargs
+                + node.args.args
+                + node.args.kwonlyargs
+                + ([node.args.vararg] if node.args.vararg else [])
+                + ([node.args.kwarg] if node.args.kwarg else [])
+            ):
+                names.add(arg.arg)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 names.add(alias.asname or alias.name.split(".")[0])

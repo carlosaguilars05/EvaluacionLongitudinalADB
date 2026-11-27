@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict aTRv6KMRKGp5rbJAXPMgbDWluhEL1pu5ZmwHZVSoW5xGYK5d2EqLDhIcYVfU7LS
+\restrict Tg0DLH3DGva8wdeFz07Q67VuhT05fkPVhOMoeyv9GLjikf7fwfEW3UgREknPwfn
 
 -- Dumped from database version 17.12
 -- Dumped by pg_dump version 17.12
@@ -1084,6 +1084,37 @@ $$;
 ALTER PROCEDURE public.sp_establecer_contexto_auditoria(IN p_id_usuario integer, IN p_ip character varying, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
+-- Name: sp_listar_aplicaciones_seed_mongo(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_listar_aplicaciones_seed_mongo(INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT
+            ai.id_aplicacion,
+            ai.id_instrumento,
+            i.nombre AS instrumento,
+            ai.id_paciente,
+            ai.id_terapeuta,
+            ai.fecha_respuesta,
+            ai.id_documento_mongo
+        FROM public.aplicacion_instrumento ai
+        JOIN public.instrumento i ON ai.id_instrumento = i.id_instrumento
+        ORDER BY ai.id_aplicacion ASC;
+
+    p_mensaje := 'Aplicaciones listadas para sincronización con MongoDB.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al listar aplicaciones: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_listar_aplicaciones_seed_mongo(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
 -- Name: sp_listar_pacientes_sin_asignar(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
 --
 
@@ -1109,6 +1140,129 @@ $$;
 
 
 ALTER PROCEDURE public.sp_listar_pacientes_sin_asignar(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_listar_referencias_bitacora(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_listar_referencias_bitacora(IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT id_referencia, id_paciente, fecha_registro, id_documento_mongo
+        FROM public.referencia_bitacora
+        WHERE id_paciente = p_id_paciente
+        ORDER BY fecha_registro DESC;
+
+    p_mensaje := 'Referencias de bitácoras recuperadas.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al listar referencias de bitácora: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_listar_referencias_bitacora(IN p_id_paciente integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_listar_referencias_resumen(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_listar_referencias_resumen(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT
+            rr.id_referencia,
+            rr.id_sesion,
+            rr.fecha_creacion,
+            rr.id_documento_mongo,
+            a.id_paciente,
+            p.nombre || ' ' || p.apellido_paterno AS paciente,
+            s.fecha AS fecha_sesion
+        FROM public.referencia_resumen rr
+        JOIN public.sesion s ON rr.id_sesion = s.id_sesion
+        JOIN public.asignacion_terapeuta_paciente a ON s.id_asignacion = a.id_asignacion
+        JOIN public.paciente p ON a.id_paciente = p.id_paciente
+        WHERE (p_id_terapeuta IS NULL OR a.id_terapeuta = p_id_terapeuta)
+        ORDER BY s.fecha DESC, rr.fecha_creacion DESC;
+
+    p_mensaje := 'Referencias de resúmenes SOAP recuperadas.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al listar referencias de resúmenes: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_listar_referencias_resumen(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_listar_resultados_de_aplicacion(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_listar_resultados_de_aplicacion(IN p_id_aplicacion integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT
+            ri.id_dimension,
+            di.nombre_dimension,
+            ri.puntuacion_bruta
+        FROM public.resultado_instrumento ri
+        JOIN public.dimension_instrumento di ON ri.id_dimension = di.id_dimension
+        WHERE ri.id_aplicacion = p_id_aplicacion
+        ORDER BY ri.id_dimension ASC;
+
+    p_mensaje := 'Resultados de aplicación recuperados.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al listar resultados de aplicación: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_listar_resultados_de_aplicacion(IN p_id_aplicacion integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_listar_sesiones_completadas_seed_mongo(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_listar_sesiones_completadas_seed_mongo(INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT
+            s.id_sesion,
+            a.id_paciente,
+            p.nombre || ' ' || p.apellido_paterno AS paciente,
+            a.id_terapeuta,
+            t.nombre || ' ' || t.apellido_paterno AS terapeuta,
+            s.fecha,
+            m.nombre AS modalidad,
+            rr.id_documento_mongo
+        FROM public.sesion s
+        JOIN public.asignacion_terapeuta_paciente a ON s.id_asignacion = a.id_asignacion
+        JOIN public.paciente p ON a.id_paciente = p.id_paciente
+        JOIN public.terapeuta t ON a.id_terapeuta = t.id_terapeuta
+        JOIN public.modalidad_sesion m ON s.id_modalidad = m.id_modalidad
+        LEFT JOIN public.referencia_resumen rr ON s.id_sesion = rr.id_sesion
+        WHERE s.id_estado_sesion = 2
+        ORDER BY s.fecha DESC, s.id_sesion ASC;
+
+    p_mensaje := 'Sesiones completadas recuperadas para sincronización SOAP.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al listar sesiones completadas: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_listar_sesiones_completadas_seed_mongo(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_listar_usuarios_para_migracion(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -1319,6 +1473,77 @@ $$;
 
 
 ALTER PROCEDURE public.sp_registrar_paciente(IN p_correo character varying, IN p_password_hash character varying, IN p_nombre character varying, IN p_ap_pat character varying, IN p_ap_mat character varying, IN p_fecha_nac date, IN p_sexo character varying, IN p_telefono character varying, OUT p_id_nuevo integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_registrar_referencia_bitacora(integer, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_registrar_referencia_bitacora(IN p_id_paciente integer, IN p_id_documento_mongo character varying, OUT p_id_referencia integer, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    SELECT id_referencia INTO p_id_referencia
+    FROM public.referencia_bitacora
+    WHERE id_documento_mongo = p_id_documento_mongo
+    LIMIT 1;
+
+    IF p_id_referencia IS NOT NULL THEN
+        p_mensaje := 'Referencia de bitácora ya existente.';
+        RETURN;
+    END IF;
+
+    INSERT INTO public.referencia_bitacora (id_paciente, id_documento_mongo)
+    VALUES (p_id_paciente, p_id_documento_mongo)
+    RETURNING id_referencia INTO p_id_referencia;
+
+    p_mensaje := 'Referencia de bitácora registrada exitosamente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_id_referencia := NULL;
+        p_mensaje := 'Error al registrar referencia de bitácora: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_registrar_referencia_bitacora(IN p_id_paciente integer, IN p_id_documento_mongo character varying, OUT p_id_referencia integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_registrar_referencia_resumen(integer, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_registrar_referencia_resumen(IN p_id_sesion integer, IN p_id_documento_mongo character varying, OUT p_id_referencia integer, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    SELECT id_referencia INTO p_id_referencia
+    FROM public.referencia_resumen
+    WHERE id_sesion = p_id_sesion
+    LIMIT 1;
+
+    IF p_id_referencia IS NOT NULL THEN
+        UPDATE public.referencia_resumen
+        SET id_documento_mongo = p_id_documento_mongo,
+            fecha_creacion = CURRENT_TIMESTAMP
+        WHERE id_referencia = p_id_referencia;
+
+        p_mensaje := 'Referencia de resumen SOAP actualizada.';
+        RETURN;
+    END IF;
+
+    INSERT INTO public.referencia_resumen (id_sesion, id_documento_mongo)
+    VALUES (p_id_sesion, p_id_documento_mongo)
+    RETURNING id_referencia INTO p_id_referencia;
+
+    p_mensaje := 'Referencia de resumen SOAP registrada exitosamente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_id_referencia := NULL;
+        p_mensaje := 'Error al registrar referencia de resumen: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_registrar_referencia_resumen(IN p_id_sesion integer, IN p_id_documento_mongo character varying, OUT p_id_referencia integer, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_registrar_terapeuta(character varying, character varying, character varying, character varying, character varying, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -1766,6 +1991,38 @@ $$;
 
 
 ALTER PROCEDURE public.sp_verificar_conexion(OUT p_ok boolean, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_vincular_documento_aplicacion(integer, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_vincular_documento_aplicacion(IN p_id_aplicacion integer, IN p_id_documento_mongo character varying, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_filas integer;
+BEGIN
+    UPDATE public.aplicacion_instrumento
+    SET id_documento_mongo = p_id_documento_mongo,
+        estado = COALESCE(estado, 'Completada'),
+        fecha_respuesta = COALESCE(fecha_respuesta, CURRENT_TIMESTAMP)
+    WHERE id_aplicacion = p_id_aplicacion;
+
+    GET DIAGNOSTICS v_filas = ROW_COUNT;
+
+    IF v_filas > 0 THEN
+        p_mensaje := 'Documento MongoDB vinculado correctamente a la aplicación #' || p_id_aplicacion || '.';
+    ELSE
+        p_mensaje := 'No se encontró la aplicación de instrumento #' || p_id_aplicacion || '.';
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al vincular documento en aplicacion_instrumento: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_vincular_documento_aplicacion(IN p_id_aplicacion integer, IN p_id_documento_mongo character varying, OUT p_mensaje character varying) OWNER TO usuario;
 
 SET default_tablespace = '';
 
@@ -3208,22 +3465,22 @@ COPY public.alerta (id_alerta, id_paciente, id_terapeuta, id_tipo_alerta, descri
 --
 
 COPY public.aplicacion_instrumento (id_aplicacion, id_instrumento, id_paciente, id_terapeuta, fecha_asignacion, fecha_respuesta, estado, id_documento_mongo) FROM stdin;
-1	1	1	1	2026-08-05 09:00:00	2026-08-05 18:00:00	Completada	\N
-2	1	1	1	2026-08-19 09:00:00	2026-08-19 19:00:00	Completada	\N
-3	1	1	1	2026-09-02 09:00:00	2026-09-02 18:30:00	Completada	\N
-4	2	2	1	2026-08-06 10:00:00	2026-08-06 17:00:00	Completada	\N
-5	2	2	1	2026-08-20 10:00:00	2026-08-20 17:30:00	Completada	\N
-6	3	3	1	2026-08-07 15:00:00	2026-08-07 20:00:00	Completada	\N
-7	3	3	1	2026-08-21 15:00:00	2026-08-21 20:15:00	Completada	\N
-8	2	4	2	2026-08-10 08:30:00	2026-08-10 14:00:00	Completada	\N
-9	2	4	2	2026-08-24 08:30:00	2026-08-24 14:30:00	Completada	\N
-10	1	5	2	2026-08-11 09:30:00	2026-08-11 16:00:00	Completada	\N
-11	1	5	2	2026-08-25 09:30:00	2026-08-25 16:10:00	Completada	\N
-12	4	7	3	2026-08-15 15:00:00	2026-08-15 19:00:00	Completada	\N
-13	2	29	11	2026-10-19 10:00:00	2026-10-19 18:00:00	Completada	\N
-14	2	29	11	2026-11-02 10:00:00	2026-11-02 18:30:00	Completada	\N
-15	1	33	11	2026-10-20 11:00:00	2026-10-20 19:00:00	Completada	\N
-16	1	33	11	2026-11-03 11:00:00	2026-11-03 19:15:00	Completada	\N
+1	1	1	1	2026-08-05 09:00:00	2026-08-05 18:00:00	Completada	6b08fb8d288aca219b1d1c7b
+2	1	1	1	2026-08-19 09:00:00	2026-08-19 19:00:00	Completada	6b08fb8d288aca219b1d1c7c
+3	1	1	1	2026-09-02 09:00:00	2026-09-02 18:30:00	Completada	6b08fb8d288aca219b1d1c7d
+4	2	2	1	2026-08-06 10:00:00	2026-08-06 17:00:00	Completada	6b08fb8d288aca219b1d1c7e
+5	2	2	1	2026-08-20 10:00:00	2026-08-20 17:30:00	Completada	6b08fb8d288aca219b1d1c7f
+6	3	3	1	2026-08-07 15:00:00	2026-08-07 20:00:00	Completada	6b08fb8d288aca219b1d1c80
+7	3	3	1	2026-08-21 15:00:00	2026-08-21 20:15:00	Completada	6b08fb8d288aca219b1d1c81
+8	2	4	2	2026-08-10 08:30:00	2026-08-10 14:00:00	Completada	6b08fb8d288aca219b1d1c82
+9	2	4	2	2026-08-24 08:30:00	2026-08-24 14:30:00	Completada	6b08fb8d288aca219b1d1c83
+10	1	5	2	2026-08-11 09:30:00	2026-08-11 16:00:00	Completada	6b08fb8e288aca219b1d1c84
+11	1	5	2	2026-08-25 09:30:00	2026-08-25 16:10:00	Completada	6b08fb8e288aca219b1d1c85
+12	4	7	3	2026-08-15 15:00:00	2026-08-15 19:00:00	Completada	6b08fb8e288aca219b1d1c86
+13	2	29	11	2026-10-19 10:00:00	2026-10-19 18:00:00	Completada	6b08fb8e288aca219b1d1c87
+14	2	29	11	2026-11-02 10:00:00	2026-11-02 18:30:00	Completada	6b08fb8e288aca219b1d1c88
+15	1	33	11	2026-10-20 11:00:00	2026-10-20 19:00:00	Completada	6b08fb8e288aca219b1d1c89
+16	1	33	11	2026-11-03 11:00:00	2026-11-03 19:15:00	Completada	6b08fb8e288aca219b1d1c8a
 \.
 
 
@@ -3579,6 +3836,24 @@ COPY public.plan_terapeutico (id_plan, id_asignacion, id_estado_plan, fecha_inic
 --
 
 COPY public.referencia_bitacora (id_referencia, id_paciente, fecha_registro, id_documento_mongo) FROM stdin;
+1	33	2026-11-26 21:39:58.817808	6b08fb8e288aca219b1d1c8b
+2	33	2026-11-26 21:39:58.922937	6b08fb8e288aca219b1d1c8c
+3	33	2026-11-26 21:39:59.025437	6b08fb8e288aca219b1d1c8d
+4	33	2026-11-26 21:39:59.127453	6b08fb8f288aca219b1d1c8e
+5	33	2026-11-26 21:39:59.228372	6b08fb8f288aca219b1d1c8f
+6	33	2026-11-26 21:39:59.332369	6b08fb8f288aca219b1d1c90
+7	33	2026-11-26 21:39:59.434716	6b08fb8f288aca219b1d1c91
+8	33	2026-11-26 21:39:59.535677	6b08fb8f288aca219b1d1c92
+9	29	2026-11-26 21:39:59.639002	6b08fb8f288aca219b1d1c93
+10	29	2026-11-26 21:39:59.742485	6b08fb8f288aca219b1d1c94
+11	29	2026-11-26 21:39:59.84261	6b08fb8f288aca219b1d1c95
+12	29	2026-11-26 21:39:59.945314	6b08fb8f288aca219b1d1c96
+13	29	2026-11-26 21:40:00.046723	6b08fb8f288aca219b1d1c97
+14	1	2026-11-26 21:40:00.149164	6b08fb90288aca219b1d1c98
+15	1	2026-11-26 21:40:00.25428	6b08fb90288aca219b1d1c99
+16	2	2026-11-26 21:40:00.352905	6b08fb90288aca219b1d1c9a
+17	3	2026-11-26 21:40:00.453408	6b08fb90288aca219b1d1c9b
+18	5	2026-11-26 21:40:00.555011	6b08fb90288aca219b1d1c9c
 \.
 
 
@@ -3587,6 +3862,18 @@ COPY public.referencia_bitacora (id_referencia, id_paciente, fecha_registro, id_
 --
 
 COPY public.referencia_resumen (id_referencia, id_sesion, fecha_creacion, id_documento_mongo) FROM stdin;
+1	39	2026-11-26 21:40:00.981103	6b08fb90288aca219b1d1c9d
+2	38	2026-11-26 21:40:01.382743	6b08fb91288aca219b1d1ca0
+3	37	2026-11-26 21:40:01.58659	6b08fb91288aca219b1d1ca3
+4	36	2026-11-26 21:40:01.789245	6b08fb91288aca219b1d1ca5
+5	35	2026-11-26 21:40:01.995493	6b08fb91288aca219b1d1ca7
+6	34	2026-11-26 21:40:02.196952	6b08fb92288aca219b1d1ca9
+7	33	2026-11-26 21:40:02.399233	6b08fb92288aca219b1d1cab
+8	32	2026-11-26 21:40:02.600891	6b08fb92288aca219b1d1cad
+9	31	2026-11-26 21:40:02.803807	6b08fb92288aca219b1d1caf
+10	30	2026-11-26 21:40:03.003956	6b08fb92288aca219b1d1cb1
+11	18	2026-11-26 21:40:03.209351	6b08fb93288aca219b1d1cb3
+12	29	2026-11-26 21:40:03.409743	6b08fb93288aca219b1d1cb5
 \.
 
 
@@ -3791,7 +4078,7 @@ COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_has
 11	2	1	terapeuta10@clinica.com	scrypt:32768:8:1$nXziezbpLltp91hT$038946bd69f533632f893d02036d108565d404967897d75436196834ad6a6107f15214a5c1a0cd104bb277e8adaf6e1ede2280ec30b6f928e1e4d4f8ede5c207	2026-10-17 19:55:18.010379	\N
 12	3	1	paciente1@correo.com	scrypt:32768:8:1$N32A2TxZzGOMBZlT$361faed09e0c6810cfd7fd231d3e97aca65c6800d337b6544d887bb617809a96355cc34884dcbb72a5f3416ca65c08a4bda4d2d65f01daf9bd688893e06dc34c	2026-10-17 19:55:18.010379	\N
 13	3	1	paciente2@correo.com	scrypt:32768:8:1$gPdkkEYKBCGB1F2v$23764701ea1403c171030b81d49a078e7ee146c6f8964b743a21db74ba437f0b2781b58b8807cf639c09a348d9c203f76ae9975defb546daaebea17af9ef9da9	2026-10-17 19:55:18.010379	\N
-1	1	1	admin@clinica.com	scrypt:32768:8:1$nJed2mU8SQdyNIlR$3359d818734171072be58ed9f13662d9b1533ca3b7482108386750bb4efc0c0df7e1f46e05c2a929be02e5aa83cb5de1d96d4f33411c1c94ad4b9fb2632957ad	2026-10-17 19:55:18.010379	2026-11-26 19:39:40.27518
+1	1	1	admin@clinica.com	scrypt:32768:8:1$nJed2mU8SQdyNIlR$3359d818734171072be58ed9f13662d9b1533ca3b7482108386750bb4efc0c0df7e1f46e05c2a929be02e5aa83cb5de1d96d4f33411c1c94ad4b9fb2632957ad	2026-10-17 19:55:18.010379	2026-11-26 20:15:31.206015
 14	3	1	paciente3@correo.com	scrypt:32768:8:1$a2TONRnNhItZaVat$59b23c4ebec173702da48b5a16df6f0db0cecafe4481b2307befbe88a6041d2c4f4d513b9aa4b565ae7d2367c9a34244f63d541ee1d0a0f1c55e0348f4e149cf	2026-10-17 19:55:18.010379	\N
 15	3	1	paciente4@correo.com	scrypt:32768:8:1$Ga5MpM7IKmywdJfy$74183073a89781c15261c6c704e7e20ea948b8e8ef88c587f1a8ea65742c924a9e17af013011fc463e7bc3e80cb38507dea71c1689dc2ff771af8bd140990ff6	2026-10-17 19:55:18.010379	\N
 16	3	1	paciente5@correo.com	scrypt:32768:8:1$jAvE001JM0bGF2XL$1e709a2e15506e666c4c48f4594a5e29664402c389aeee6e7f6744898deb64ef0241a1b6499598efdd879cca5bc6463fb984b97523a7324e6a7f6dbfc25d9e1c	2026-10-17 19:55:18.010379	\N
@@ -3826,8 +4113,8 @@ COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_has
 47	3	1	ce_aguilar@hotmail.com	scrypt:32768:8:1$z6clz8BuPzfmuhKd$c3d28d85331378f3664cf59bf0e21b61b990dc6e4d71bb8e1cbb8e77ed825b2bfdc984c8323b6fbb029a2d39e158bd991747b588bfb8ce5ec0d96f9b39344ac3	2026-10-18 03:08:25.882202	\N
 48	3	2	eduardo.aguilar@directlink.net.mx	scrypt:32768:8:1$28vHEWzqcAyOcrBt$cc8a44db8f8270c48167f57e9e9cf2a81927647e8a0f3402ef5dcbf14788674f08889faffdc6dbafacc9b7b10e2e41f9413959b736e5a377be559932e2d17220	2026-10-18 03:37:49.230778	\N
 52	3	2	email@gmail.com	scrypt:32768:8:1$F3qnbKPJ1rW0UlEH$947e6f947d9078a28a173628524762a19121466f6d1497c9743e3213b483b5869100e487d55f26a6d222df6b174a2d3236f7829ffd61b6eb96902e9c33981770	2026-10-22 14:41:28.265484	\N
-50	2	1	paola.terapeuta@clinica.com	scrypt:32768:8:1$CGMEvwdI30D4WPyb$abdd0cc43bcfbdcf9c63236f3a269b7fdf584aa10fff8f7a075e9d0ee04deef62752d102c6a8c0aa504d5ced279c3ef3e2cfb6c1661ad6b4ed1bbe9d8aae93e6	2026-10-18 22:07:13.917424	2026-11-26 19:18:02.590892
-51	3	1	carlos.paciente@clinica.com	scrypt:32768:8:1$pFvaN6CSan2V1Eg6$58c588d643ae437b3ea2be96c7740930127e9f4b87e5ae46f3b62349ea7abb2216cf86d5edbd6bf2e8f2a415d6ff84fe3d130c2ad2f63416e5f613f16b069766	2026-10-18 23:06:25.68	2026-11-26 19:18:03.104756
+50	2	1	paola.terapeuta@clinica.com	scrypt:32768:8:1$CGMEvwdI30D4WPyb$abdd0cc43bcfbdcf9c63236f3a269b7fdf584aa10fff8f7a075e9d0ee04deef62752d102c6a8c0aa504d5ced279c3ef3e2cfb6c1661ad6b4ed1bbe9d8aae93e6	2026-10-18 22:07:13.917424	2026-11-26 20:08:48.330508
+51	3	1	carlos.paciente@clinica.com	scrypt:32768:8:1$pFvaN6CSan2V1Eg6$58c588d643ae437b3ea2be96c7740930127e9f4b87e5ae46f3b62349ea7abb2216cf86d5edbd6bf2e8f2a415d6ff84fe3d130c2ad2f63416e5f613f16b069766	2026-10-18 23:06:25.68	2026-11-26 20:08:48.940183
 \.
 
 
@@ -3975,14 +4262,14 @@ SELECT pg_catalog.setval('public.plan_terapeutico_id_plan_seq', 12, true);
 -- Name: referencia_bitacora_id_referencia_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.referencia_bitacora_id_referencia_seq', 1, false);
+SELECT pg_catalog.setval('public.referencia_bitacora_id_referencia_seq', 19, true);
 
 
 --
 -- Name: referencia_resumen_id_referencia_seq; Type: SEQUENCE SET; Schema: public; Owner: usuario
 --
 
-SELECT pg_catalog.setval('public.referencia_resumen_id_referencia_seq', 1, false);
+SELECT pg_catalog.setval('public.referencia_resumen_id_referencia_seq', 12, true);
 
 
 --
@@ -4709,5 +4996,5 @@ ALTER TABLE ONLY public.usuario
 -- PostgreSQL database dump complete
 --
 
-\unrestrict aTRv6KMRKGp5rbJAXPMgbDWluhEL1pu5ZmwHZVSoW5xGYK5d2EqLDhIcYVfU7LS
+\unrestrict Tg0DLH3DGva8wdeFz07Q67VuhT05fkPVhOMoeyv9GLjikf7fwfEW3UgREknPwfn
 

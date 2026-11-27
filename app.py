@@ -25,6 +25,8 @@ from flask import Flask, flash, redirect, render_template, request, session, url
 import psycopg
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import mongo_db
+
 
 # ==============================================================================
 # 1. Configuración e Infraestructura
@@ -192,7 +194,13 @@ def principal():
         "asignaciones": resultado[2],
         "citas_hoy": resultado[3],
     }
-    return render_template("index.html", metricas=metricas)
+    mongo_ok, mongo_msg, mongo_conteos = mongo_db.verificar_conexion_mongo()
+    estado_mongo = {
+        "ok": mongo_ok,
+        "mensaje": mongo_msg,
+        "conteos": mongo_conteos,
+    }
+    return render_template("index.html", metricas=metricas, estado_mongo=estado_mongo)
 
 
 # ==============================================================================
