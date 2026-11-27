@@ -1,3 +1,18 @@
+"""
+Sistema de Gestión Clínica (Equipo 01) — Backend Flask + Jinja2 + PostgreSQL (SP exclusivo).
+
+Estructura del archivo:
+  1. Configuración e Infraestructura (variables de entorno, Flask y conexión BD)
+  2. Seguridad y Control de Acceso (RBAC y guardia global)
+  3. Autenticación (/login, /logout)
+  4. Inicio / Dashboard (/)
+  5. Módulo de Pacientes (/pacientes, /mis_pacientes, CRUD y baja lógica)
+  6. Módulo de Terapeutas (/terapeutas, CRUD y baja lógica)
+  7. Módulo de Asignaciones (/asignaciones, vinculación terapeuta-paciente)
+  8. Módulo de Agenda y Sesiones (/sesiones, agendar y cancelar)
+  9. Punto de Entrada (__main__)
+"""
+
 from functools import wraps
 import os
 import secrets
@@ -7,12 +22,14 @@ from flask import Flask, flash, redirect, render_template, request, session, url
 import psycopg
 from werkzeug.security import check_password_hash, generate_password_hash
 
-# Cargar variables de entorno (.env en desarrollo local; variables del sistema en GCP)
+
+# ==============================================================================
+# 1. Configuración e Infraestructura
+# ==============================================================================
 load_dotenv()
 
 app = Flask(__name__)
 
-# Configuración segura de sesión desde variables de entorno
 _secret_key = os.environ.get("FLASK_SECRET_KEY")
 if not _secret_key:
     _secret_key = secrets.token_hex(32)
@@ -25,7 +42,6 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_COOKIE_SECURE", "false").lower() == "true"
 
-# Configuración de PostgreSQL (local o Cloud SQL for PostgreSQL)
 DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_PORT = int(os.environ.get("DB_PORT", "5432"))
 DB_NAME = os.environ.get("DB_NAME", "BD")
@@ -42,7 +58,6 @@ def conectar():
         "user": DB_USER,
         "password": DB_PASSWORD,
     }
-    # Si no es Unix socket de Cloud SQL (/cloudsql/...), incluir puerto y SSL
     if not DB_HOST.startswith("/"):
         params["port"] = DB_PORT
         params["sslmode"] = DB_SSLMODE
@@ -61,6 +76,9 @@ def verificar_conexion_bd():
         return False, f"No se pudo conectar a PostgreSQL: {exc}"
 
 
+# ==============================================================================
+# 2. Seguridad y Control de Acceso (RBAC)
+# ==============================================================================
 def rol_requerido(*roles_permitidos):
     """Decorador RBAC: restringe el acceso a los roles autorizados (1=Admin, 2=Terapeuta, 3=Paciente)."""
     def decorador(vista):
@@ -86,7 +104,64 @@ def proteger_rutas():
 
 
 # ==============================================================================
-# Inicio / Dashboard (Admin)
+# 3. Autenticación (Login / Logout con hashes seguros Werkzeug)
+# ==============================================================================
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET" and "usuario_id" in session:
+        return redirect(url_for("principal"))
+
+    if request.method == "POST":
+        correo = (request.form.get("correo") or "").strip()
+        password_ingresada = request.form.get("password") or ""
+
+        with conectar() as conexion:
+            with conexion.cursor() as cur:
+                cur.execute("CALL sp_obtener_usuario_login(%s, NULL, NULL, NULL, NULL, NULL)", (correo,))
+                id_usuario, id_rol, password_hash_bd, id_estado, mensaje_bd = cur.fetchone()
+
+                if id_usuario is None:
+                    flash(mensaje_bd or "El correo no existe en el sistema.", "error")
+                elif id_estado != 1:
+                    flash("Tu cuenta se encuentra inactiva. Contacta al administrador.", "error")
+                elif not password_hash_bd or not check_password_hash(password_hash_bd, password_ingresada):
+                    flash("Contraseña incorrecta.", "error")
+                else:
+                    session.clear()
+                    session["usuario_id"] = id_usuario
+                    session["usuario_rol"] = id_rol
+                    session["usuario_correo"] = correo
+
+                    if id_rol == 2:
+                        cur.execute("CALL sp_consultar_terapeuta_usuario(%s, NULL)", (id_usuario,))
+                        datos_terapeuta = cur.fetchone()
+                        if datos_terapeuta and datos_terapeuta[0] is not None:
+                            session["terapeuta_id"] = datos_terapeuta[0]
+                    elif id_rol == 3:
+                        cur.execute("CALL sp_consultar_paciente_usuario(%s, NULL)", (id_usuario,))
+                        datos_paciente = cur.fetchone()
+                        if datos_paciente and datos_paciente[0] is not None:
+                            session["paciente_id"] = datos_paciente[0]
+
+                    cur.execute("CALL sp_registrar_acceso_usuario(%s, NULL)", (id_usuario,))
+                    conexion.commit()
+                    flash("Sesión iniciada correctamente.", "success")
+                    return redirect(url_for("principal"))
+
+            conexion.commit()
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("Has cerrado sesión correctamente.", "success")
+    return redirect(url_for("login"))
+
+
+# ==============================================================================
+# 4. Inicio / Dashboard (Admin)
 # ==============================================================================
 @app.route("/")
 def principal():
@@ -110,7 +185,7 @@ def principal():
 
 
 # ==============================================================================
-# Módulo de Pacientes (Solo Administrador - Rol 1)
+# 5. Módulo de Pacientes (Directorio Admin, Mis Pacientes Terapeuta y CRUD)
 # ==============================================================================
 @app.route("/pacientes")
 @rol_requerido(1)
@@ -121,6 +196,20 @@ def pacientes():
             cur.execute("FETCH ALL FROM cursor_pacientes")
             lista_pacientes = cur.fetchall()
     return render_template("registros.html", Pacientes=lista_pacientes)
+
+
+@app.route("/mis_pacientes")
+@rol_requerido(2)
+def mis_pacientes():
+    id_terapeuta = session.get("terapeuta_id")
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_mis_pacientes(%s, 'cursor_mis_pacientes')", (id_terapeuta,))
+            cur.execute("FETCH ALL FROM cursor_mis_pacientes")
+            lista_mis_pacientes = cur.fetchall()
+
+    return render_template("misPacientes.html", pacientes=lista_mis_pacientes)
 
 
 @app.route("/insertar")
@@ -213,7 +302,7 @@ def borrar(id_paciente):
 
 
 # ==============================================================================
-# Módulo de Terapeutas (Solo Administrador - Rol 1)
+# 6. Módulo de Terapeutas (Solo Administrador - Rol 1)
 # ==============================================================================
 @app.route("/terapeutas")
 @rol_requerido(1)
@@ -314,7 +403,7 @@ def borrarTerapeuta(id_terapeuta):
 
 
 # ==============================================================================
-# Módulo de Asignaciones (Solo Administrador - Rol 1)
+# 7. Módulo de Asignaciones (Solo Administrador - Rol 1)
 # ==============================================================================
 @app.route("/asignaciones")
 @rol_requerido(1)
@@ -365,7 +454,7 @@ def registra_asignacion():
 
 
 # ==============================================================================
-# Módulo de Agenda y Sesiones (Roles 1, 2 y 3 con alcance por rol y propiedad)
+# 8. Módulo de Agenda y Sesiones (Roles 1, 2 y 3 con alcance por rol y propiedad)
 # ==============================================================================
 @app.route("/sesiones")
 @rol_requerido(1, 2, 3)
@@ -431,7 +520,6 @@ def registra_sesion():
 
     with conectar() as conexion:
         with conexion.cursor() as cur:
-            # Si es terapeuta, validar que la asignación le pertenezca
             if session.get("usuario_rol") == 2:
                 cur.execute(
                     "CALL sp_validar_propiedad_asignacion(%s, %s, NULL, NULL)",
@@ -480,79 +568,8 @@ def cancelar_sesion(id_sesion):
 
 
 # ==============================================================================
-# Módulo del Terapeuta (Solo Terapeuta - Rol 2)
+# 9. Punto de Entrada
 # ==============================================================================
-@app.route("/mis_pacientes")
-@rol_requerido(2)
-def mis_pacientes():
-    id_terapeuta = session.get("terapeuta_id")
-
-    with conectar() as conexion:
-        with conexion.cursor() as cur:
-            cur.execute("CALL sp_consultar_mis_pacientes(%s, 'cursor_mis_pacientes')", (id_terapeuta,))
-            cur.execute("FETCH ALL FROM cursor_mis_pacientes")
-            lista_mis_pacientes = cur.fetchall()
-
-    return render_template("misPacientes.html", pacientes=lista_mis_pacientes)
-
-
-# ==============================================================================
-# Autenticación (Login / Logout con hashes seguros Werkzeug)
-# ==============================================================================
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "GET" and "usuario_id" in session:
-        return redirect(url_for("principal"))
-
-    if request.method == "POST":
-        correo = (request.form.get("correo") or "").strip()
-        password_ingresada = request.form.get("password") or ""
-
-        with conectar() as conexion:
-            with conexion.cursor() as cur:
-                cur.execute("CALL sp_obtener_usuario_login(%s, NULL, NULL, NULL, NULL, NULL)", (correo,))
-                id_usuario, id_rol, password_hash_bd, id_estado, mensaje_bd = cur.fetchone()
-
-                if id_usuario is None:
-                    flash(mensaje_bd or "El correo no existe en el sistema.", "error")
-                elif id_estado != 1:
-                    flash("Tu cuenta se encuentra inactiva. Contacta al administrador.", "error")
-                elif not password_hash_bd or not check_password_hash(password_hash_bd, password_ingresada):
-                    flash("Contraseña incorrecta.", "error")
-                else:
-                    session.clear()
-                    session["usuario_id"] = id_usuario
-                    session["usuario_rol"] = id_rol
-                    session["usuario_correo"] = correo
-
-                    if id_rol == 2:
-                        cur.execute("CALL sp_consultar_terapeuta_usuario(%s, NULL)", (id_usuario,))
-                        datos_terapeuta = cur.fetchone()
-                        if datos_terapeuta and datos_terapeuta[0] is not None:
-                            session["terapeuta_id"] = datos_terapeuta[0]
-                    elif id_rol == 3:
-                        cur.execute("CALL sp_consultar_paciente_usuario(%s, NULL)", (id_usuario,))
-                        datos_paciente = cur.fetchone()
-                        if datos_paciente and datos_paciente[0] is not None:
-                            session["paciente_id"] = datos_paciente[0]
-
-                    cur.execute("CALL sp_registrar_acceso_usuario(%s, NULL)", (id_usuario,))
-                    conexion.commit()
-                    flash("Sesión iniciada correctamente.", "success")
-                    return redirect(url_for("principal"))
-
-            conexion.commit()
-
-    return render_template("login.html")
-
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    flash("Has cerrado sesión correctamente.", "success")
-    return redirect(url_for("login"))
-
-
 if __name__ == "__main__":
     ok, msg = verificar_conexion_bd()
     print(f"[BD] {msg}")
