@@ -46,7 +46,12 @@ function Convert-SecureToPlain([System.Security.SecureString]$Sec) {
 
 function New-RandomSecretKey {
     $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        $rng.Dispose()
+    }
     return ([System.BitConverter]::ToString($bytes) -replace "-", "").ToLowerInvariant()
 }
 
@@ -109,13 +114,14 @@ BEGIN
 END
 `$`$;
 "@
-    & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -v ON_ERROR_STOP=1 -c $roleSql | Out-Null
+    $roleSql | & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -v ON_ERROR_STOP=1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Error al crear/actualizar el rol '$AppUser'." }
     Write-Host "  Rol '$AppUser' listo." -ForegroundColor Green
 
     Write-Host "[3/5] Preparando base de datos `"$DbName`"..." -ForegroundColor Cyan
     $escapedDb = $DbName.Replace("'", "''")
-    $dbExists = (& $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$escapedDb';").Trim()
+    $dbExistsRaw = "SELECT 1 FROM pg_database WHERE datname = '$escapedDb';" | & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -tA
+    $dbExists = ("$dbExistsRaw").Trim()
     if ($dbExists -eq "1") {
         if (-not $Force) {
             $confirm = Read-Host "La base de datos `"$DbName`" ya existe. ¿Deseas recrearla desde backup_BD.sql? (s/N)"
@@ -124,12 +130,12 @@ END
                 exit 0
             }
         }
-        & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$escapedDb' AND pid <> pg_backend_pid();" | Out-Null
-        & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE `"$DbName`";" | Out-Null
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$escapedDb' AND pid <> pg_backend_pid();" | & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -v ON_ERROR_STOP=1 | Out-Null
+        "DROP DATABASE `"$DbName`";" | & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -v ON_ERROR_STOP=1 | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Error al eliminar la base de datos existente `"$DbName`"." }
     }
 
-    & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE `"$DbName`" OWNER `"$AppUser`" ENCODING 'UTF8';" | Out-Null
+    "CREATE DATABASE `"$DbName`" OWNER `"$AppUser`" ENCODING 'UTF8';" | & $psql -h $DbHost -p $DbPort -U $AdminUser -d postgres -v ON_ERROR_STOP=1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Error al crear la base de datos `"$DbName`"." }
     Write-Host "  Base de datos `"$DbName`" creada con owner '$AppUser'." -ForegroundColor Green
 
