@@ -94,11 +94,12 @@ Este archivo define las **reglas obligatorias de arquitectura, codificación, ba
 ## 2. Mapa Actual del Proyecto (Línea Base)
 
 ### Estructura de archivos
-- `app.py`: Monolito Flask (23 rutas + `@app.before_request`).
-- `backup_BD.sql`: Respaldo PostgreSQL completo (30 tablas, 8 vistas `vw_*`, 32 SPs `sp_*`).
-- `templates/`: 14 plantillas Jinja2 (`login`, `index`, `registros`, `insertar`, `actualizar`, `terapeutas`, `insertarTerapeuta`, `actualizarTerapeuta`, `asignaciones`, `nuevaAsignacion`, `misPacientes`, `sesiones`, `nuevaSesion`, `errorAgenda`).
+- `app.py`: Monolito Flask (23 rutas + `@app.before_request` + `@rol_requerido`, `.env`, hashes Werkzeug).
+- `backup_BD.sql`: Respaldo PostgreSQL completo (30 tablas, 8 vistas `vw_*`, 39 SPs `sp_*`).
+- `sql/`: Scripts SQL versionados (`04_fase2_seguridad_sp.sql`, etc.).
+- `templates/`: Plantilla base `base.html` + 14 plantillas Jinja2 con aviso clínico obligatorio.
 - `static/css/estilos.css` y `static/js/`.
-- `scripts/setup_db.ps1` y `scripts/export_backup.ps1`: Restauración y respaldo local en PostgreSQL 17.
+- `scripts/`: `setup_db.ps1`, `export_backup.ps1`, `migrar_passwords_seed.py`.
 - `harness/verify_harness.py`: Verificador automatizado de reglas y progreso contra rúbrica.
 
 ### Variables de sesión estándar
@@ -123,21 +124,25 @@ Este archivo define las **reglas obligatorias de arquitectura, codificación, ba
 | `vw_reporte_auditoria` | Definida en BD | `/auditoria` (solo Admin) |
 
 ### Contratos posicionales críticos de SPs activos (resumen)
-- `sp_consultar_metricas_dashboard`: `(pacientes, terapeutas, asignaciones, citas_hoy)`
+- `sp_verificar_conexion`: `(ok, mensaje)`
+- `sp_obtener_usuario_login`: `(id_usuario, id_rol, password_hash, id_estado_usuario, mensaje)`
+- `sp_registrar_acceso_usuario`: `(mensaje)`
+- `sp_consultar_metricas_dashboard`: `(pacientes_activos, terapeutas_activos, asignaciones_vigentes, citas_hoy_activas)`
 - `sp_consultar_pacientes`: `(0: id_paciente, 1: nombre, 2: ap_pat, 3: ap_mat, 4: telefono)`
 - `sp_obtener_paciente_por_id`: `(0: id_paciente, 1: nombre, 2: ap_pat, 3: ap_mat, 4: fecha_nac, 5: sexo, 6: telefono)`
 - `sp_consultar_terapeutas` / `sp_obtener_terapeuta_por_id`: `(0: id_terapeuta, 1: nombre, 2: ap_pat, 3: ap_mat, 4: cedula)`
-- `sp_consultar_asignaciones_vigentes`: `(0: id_asignacion, 1: terapeuta_encargado, 2: paciente_asignado, 3: fecha_inicio)`
+- `sp_consultar_asignaciones_vigentes` / `sp_consultar_asignaciones_terapeuta`: `(0: id_asignacion, 1: terapeuta_encargado, 2: paciente_asignado, 3: fecha_inicio)`
+- `sp_validar_propiedad_asignacion` / `sp_validar_propiedad_sesion`: `(autorizado_bool, mensaje)`
 - `sp_listar_pacientes_sin_asignar`: `(0: id_paciente, 1: nombre_completo)` *(2 columnas exactas)*
 - `sp_consultar_agenda_*`: `(0: id_sesion, 1: fecha, 2: hora_inicio, 3: hora_fin, 4: modalidad, 5: estado_sesion, 6: terapeuta, 7: paciente)`
 - `sp_consultar_mis_pacientes`: `(0: id_paciente, 1: nombre, 2: ap_pat, 3: ap_mat, 4: fecha_nac, 5: sexo, 6: telefono)`
 
-### Deuda técnica identificada (a resolver en Fase 2+)
-1. `app.py` usa `flash(...)` sin importarlo desde `flask`.
-2. `app.py` compara contraseñas en texto plano (`password_ingresada == password_bd`), hardcodea `DB_PASSWORD = ''` y `secret_key`, y tiene `print("Aplicacion conectada...")` sin verificar conexión real.
-3. Faltan controles RBAC en rutas CRUD de Admin (`/insertar`, `/registra`, `/editar`, `/actualizar`, `/borrar`, `/insertarTerapeuta`, `/registra-terapeuta`, `/editarTerapeuta`, `/actualizar-terapeuta`, `/borrarTerapeuta`, `/nuevaAsignacion`, `/registra-asignacion`), propiedad en sesiones, y `id_admin = 1` está hardcodeado.
-4. `nuevaAsignacion.html` referencia `p[2]` aunque `sp_listar_pacientes_sin_asignar` solo retorna 2 columnas (`p[0]`, `p[1]`).
-5. Pendientes de rúbrica final: triggers (>= 5, auditoría + reactivos), >= 3 SPs con tablas temporales, `sql/06_joins_y_consultas_avanzadas.sql` completo, MongoDB (>= 4 colecciones), flujo de consulta/transcripción/Nota SOAP, planes/objetivos/cuestionarios/bitácoras, ETL de preprocesamiento y análisis, Highcharts, reportes descargables, pruebas `pytest` y despliegue GCP + `ubiquitous.udem.edu`.
+### Pendientes de fases siguientes (Fases 3–7)
+- **Fase 3:** Triggers (`>= 5`: auditoría por entidad crítica + integridad/lógica reactiva), `>= 3` SPs con tablas temporales (`CREATE TEMP TABLE ... ON COMMIT DROP`), integración de todas las vistas `vw_*` desde Flask, datos semilla `>= 10` por dominio, y `sql/06_joins_y_consultas_avanzadas.sql`.
+- **Fase 4:** MongoDB (`>= 4` colecciones clínicas flexibles + coordinación con PostgreSQL).
+- **Fase 5:** Flujo completo de consulta/transcripción/Nota SOAP, planes terapéuticos, objetivos, cuestionarios psicométricos simulados, bitácoras emocionales, alertas y auditoría.
+- **Fase 6:** Pipeline ETL de preprocesamiento/análisis, tableros Highcharts (vía Jinja2 `| tojson`) y reportes descargables (CSV/XLSX/PDF).
+- **Fase 7:** Suite `pytest`, despliegue en Google Cloud Platform (Compute Engine + Cloud SQL + MongoDB Atlas) y `ubiquitous.udem.edu`, documentación final y paquete `.zip`/`.tar.gz`.
 
 ---
 

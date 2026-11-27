@@ -2,42 +2,48 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Iniciar Sesión - Clínica</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar Sesión - Gestión Clínica</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
 </head>
-<body style="background-color: #f1f5f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0;">
+<body style="background-color: #f1f5f9;">
+    <main style="display: flex; align-items: center; justify-content: center; padding: 2rem 1rem;">
+        <div class="contenedor" style="width: 100%; max-width: 420px; padding: 2.5rem; margin: 0; border-top: 5px solid #1e40af; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+            <h1 style="text-align: center; color: #1e40af; margin-bottom: 0.4rem;">Gestión Clínica</h1>
+            <h3 style="text-align: center; color: #475569; margin-top: 0; margin-bottom: 1.8rem; font-weight: 500;">Acceso al Sistema</h3>
 
-    <div class="contenedor" style="width: 100%; max-width: 400px; padding: 2.5rem; border-top: 5px solid #1e40af; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
-        <h1 style="text-align: center; color: #1e40af; margin-bottom: 0.5rem;">Gestión Clínica</h1>
-        <h3 style="text-align: center; color: #475569; margin-top: 0; margin-bottom: 2rem;">Acceso al Sistema</h3>
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alerta {% if category == 'error' %}alerta-error{% else %}alerta-success{% endif %}">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
 
-        <!-- Alertas de error si se equivoca de contraseña -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div style="padding: 0.8rem; margin-bottom: 1.5rem; border-radius: 4px; font-size: 0.9rem;
-                        {% if category == 'error' %} background-color: #fee2e2; color: #b91c1c; border: 1px solid #f87171; 
-                        {% else %} background-color: #dcfce3; color: #166534; border: 1px solid #86efac; {% endif %}">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
+            <form action="{{ url_for('login') }}" method="POST">
+                <div class="grupo-form">
+                    <label for="correo">Correo Electrónico:</label>
+                    <input id="correo" type="email" name="correo" required placeholder="Ej: admin@clinica.com">
+                </div>
 
-        <form action="{{ url_for('login') }}" method="POST">
-            <div class="grupo-form">
-                <label style="font-weight: bold; color: #334155;">Correo Electrónico:</label>
-                <input type="email" name="correo" required placeholder="Ej: admin@clinica.com" style="width: 100%; padding: 0.75rem; margin-top: 0.5rem; border: 1px solid #cbd5e1; border-radius: 4px;">
-            </div>
+                <div class="grupo-form" style="margin-top: 1.25rem;">
+                    <label for="password">Contraseña:</label>
+                    <input id="password" type="password" name="password" required placeholder="••••••••">
+                </div>
 
-            <div class="grupo-form" style="margin-top: 1.5rem;">
-                <label style="font-weight: bold; color: #334155;">Contraseña:</label>
-                <input type="password" name="password" required placeholder="••••••••" style="width: 100%; padding: 0.75rem; margin-top: 0.5rem; border: 1px solid #cbd5e1; border-radius: 4px;">
-            </div>
+                <button type="submit" class="btn btn-primario" style="width: 100%; margin-top: 1.5rem; padding: 0.8rem; font-size: 1.05rem;">
+                    Iniciar Sesión
+                </button>
+            </form>
+        </div>
+    </main>
 
-            <button type="submit" class="btn btn-primario" style="width: 100%; margin-top: 2rem; padding: 0.8rem; font-size: 1.1rem;">Iniciar Sesión</button>
-        </form>
-    </div>
-
+    <footer class="aviso-clinico">
+        <strong>Aviso clínico importante:</strong> Esta plataforma es una herramienta de apoyo al seguimiento terapéutico y con fines académicos;
+        <strong>no sustituye la atención médica o psicológica profesional ni debe utilizarse para atender emergencias.</strong>
+        Ante una crisis inmediata, comunícate con el 911 o la Línea de la Vida (800 911 2000).
+    </footer>
 </body>
 </html>

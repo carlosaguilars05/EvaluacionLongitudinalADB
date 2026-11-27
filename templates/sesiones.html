@@ -1,41 +1,26 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Agenda de Sesiones</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
-</head>
-<body>
-    <nav>
-        <h2>Sistema de Gestión Clínica</h2>
-        <div>
-            <!-- Solo el Admin (rol 1) ve el catálogo global -->
-            {% if session.get('usuario_rol') == 1 %}
-                <a href="{{ url_for('principal') }}">Inicio</a>
-                <a href="{{ url_for('pacientes') }}">Pacientes</a>
-                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
-                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
+{% extends "base.html" %}
+
+{% block title %}Agenda de Sesiones - Gestión Clínica{% endblock %}
+
+{% block content %}
+{% set rol = session.get('usuario_rol') %}
+<div class="contenedor">
+    <div class="encabezado-seccion">
+        <h1>
+            {% if rol == 1 %}
+                Agenda General de la Clínica
+            {% elif rol == 2 %}
+                Mi Agenda Terapéutica
+            {% else %}
+                Mis Citas Programadas
             {% endif %}
-
-            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
-            {% if session.get('usuario_rol') == 2 %}
-                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
-            {% endif %}
-
-            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
-            <a href="{{ url_for('sesiones') }}">Agenda</a>
-            
-            <!-- Botón de Salir para todos -->
-            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
-        </div>
-    </nav>
-
-    <div class="contenedor">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h1>Agenda General de la Clínica</h1>
+        </h1>
+        {% if rol in (1, 2) %}
             <a href="{{ url_for('nuevaSesion') }}" class="btn btn-primario">+ Agendar Sesión</a>
-        </div>
+        {% endif %}
+    </div>
 
+    <div class="tabla-responsive">
         <table>
             <thead>
                 <tr>
@@ -45,7 +30,9 @@
                     <th>Terapeuta</th>
                     <th>Paciente</th>
                     <th>Estado</th>
-                    <th>Acciones</th> <!-- Nueva columna -->
+                    {% if rol in (1, 2) %}
+                        <th>Acciones</th>
+                    {% endif %}
                 </tr>
             </thead>
             <tbody>
@@ -57,29 +44,33 @@
                     <td style="font-weight: 600; color: #1e40af;">{{ s[6] }}</td>
                     <td>{{ s[7] }}</td>
                     <td>
-                        <!-- Si el estado es Cancelada, lo pintamos de rojo, si no, de azul -->
                         {% if s[5] == 'Cancelada' %}
-                            <span style="background-color: #fee2e2; color: #b91c1c; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85rem;">
-                                {{ s[5] }}
-                            </span>
+                            <span class="badge badge-cancelada">{{ s[5] }}</span>
+                        {% elif s[5] == 'Completada' %}
+                            <span class="badge badge-completada">{{ s[5] }}</span>
                         {% else %}
-                            <span style="background-color: #dbeafe; color: #1e40af; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85rem;">
-                                {{ s[5] }}
-                            </span>
+                            <span class="badge badge-programada">{{ s[5] }}</span>
                         {% endif %}
                     </td>
+                    {% if rol in (1, 2) %}
                     <td>
-                        <!-- Botón para cancelar -->
-                        {% if s[5] != 'Cancelada' %}
+                        {% if s[5] == 'Programada' %}
                         <form action="{{ url_for('cancelar_sesion', id_sesion=s[0]) }}" method="POST" style="display:inline;">
                             <button type="submit" class="btn btn-borrar" onclick="return confirm('¿Estás seguro de cancelar esta sesión?');">Cancelar</button>
                         </form>
                         {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="{% if rol in (1, 2) %}7{% else %}6{% endif %}" style="text-align: center; color: #64748b;">
+                        No hay sesiones registradas en tu agenda.
                     </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
-</body>
-</html>
+</div>
+{% endblock %}

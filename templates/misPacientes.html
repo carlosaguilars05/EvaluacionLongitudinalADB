@@ -1,58 +1,30 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Mis Pacientes - Clínica</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
-</head>
-<body style="background-color: #f1f5f9; min-height: 100vh; margin: 0;">
+{% extends "base.html" %}
 
-    <!-- Pega aquí el nav inteligente del paso anterior -->
-    <nav>
-        <h2>Sistema de Gestión Clínica</h2>
-        <div>
-            <!-- Solo el Admin (rol 1) ve el catálogo global -->
-            {% if session.get('usuario_rol') == 1 %}
-                <a href="{{ url_for('principal') }}">Inicio</a>
-                <a href="{{ url_for('pacientes') }}">Pacientes</a>
-                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
-                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
-            {% endif %}
+{% block title %}Mis Pacientes - Gestión Clínica{% endblock %}
 
-            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
-            {% if session.get('usuario_rol') == 2 %}
-                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
-            {% endif %}
+{% block content %}
+<div class="contenedor">
+    <h1 style="color: #1e40af; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.75rem;">Expedientes: Mis Pacientes</h1>
 
-            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
-            <a href="{{ url_for('sesiones') }}">Agenda</a>
-            
-            <!-- Botón de Salir para todos -->
-            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
-        </div>
-    </nav>
-
-    <div class="contenedor" style="padding: 2rem; max-width: 1000px; margin: 2rem auto; background-color: white; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
-        <h2 style="color: #1e40af; border-bottom: 2px solid #e2e8f0; padding-bottom: 1rem; margin-top: 0;">Expedientes: Mis Pacientes</h2>
-
-        <table style="width: 100%; border-collapse: collapse; margin-top: 1.5rem;">
+    <div class="tabla-responsive">
+        <table>
             <thead>
-                <tr style="background-color: #f8fafc; text-align: left; border-bottom: 2px solid #cbd5e1;">
-                    <th style="padding: 1rem; color: #334155;">ID</th>
-                    <th style="padding: 1rem; color: #334155;">Nombre del Paciente</th>
-                    <th style="padding: 1rem; color: #334155;">Fecha de Nacimiento</th>
-                    <th style="padding: 1rem; color: #334155;">Sexo</th>
-                    <th style="padding: 1rem; color: #334155;">Teléfono</th>
+                <tr>
+                    <th>ID</th>
+                    <th>Nombre del Paciente</th>
+                    <th>Fecha de Nacimiento</th>
+                    <th>Sexo</th>
+                    <th>Teléfono</th>
                 </tr>
             </thead>
             <tbody>
                 {% for paciente in pacientes %}
-                <tr style="border-bottom: 1px solid #e2e8f0;">
-                    <td style="padding: 1rem; color: #64748b;">{{ paciente[0] }}</td>
-                    <td style="padding: 1rem; font-weight: bold; color: #1e3a8a;">{{ paciente[1] }} {{ paciente[2] }} {{ paciente[3] }}</td>
-                    <td style="padding: 1rem; color: #475569;">{{ paciente[4] }}</td>
-                    <td style="padding: 1rem; color: #475569;">{{ paciente[5] }}</td>
-                    <td style="padding: 1rem; color: #475569;">{{ paciente[6] }}</td>
+                <tr>
+                    <td style="color: #64748b;">{{ paciente[0] }}</td>
+                    <td style="font-weight: 600; color: #1e3a8a;">{{ paciente[1] }} {{ paciente[2] }} {{ paciente[3] or '' }}</td>
+                    <td>{{ paciente[4] }}</td>
+                    <td>{{ paciente[5] or 'No especificado' }}</td>
+                    <td>{{ paciente[6] or 'Sin registro' }}</td>
                 </tr>
                 {% else %}
                 <tr>
@@ -62,6 +34,5 @@
             </tbody>
         </table>
     </div>
-
-</body>
-</html>
+</div>
+{% endblock %}

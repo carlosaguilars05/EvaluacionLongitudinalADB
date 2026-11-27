@@ -2,14 +2,15 @@
 -- PostgreSQL database dump
 --
 
-\restrict eAgh38gE6xsFTLfAnP3ArlknTsrz3MJqY2Iu65H9y5Rl3X3MQXKSYL8xD9FC51r
+\restrict PuNGCWdCibQriNAGAV9wSyijN7QJ0DkXpLXI8QCcswWTJhCWfpeTltFnHlCJVNA
 
--- Dumped from database version 16.14
--- Dumped by pg_dump version 16.14
+-- Dumped from database version 17.12
+-- Dumped by pg_dump version 17.12
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -40,6 +41,28 @@ $$;
 
 
 ALTER PROCEDURE public.sp_actualizar_paciente(IN p_id_paciente integer, IN p_telefono character varying, IN p_nombre character varying, IN p_ap_pat character varying, IN p_ap_mat character varying, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_actualizar_password_usuario(integer, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_actualizar_password_usuario(IN p_id_usuario integer, IN p_password_hash character varying, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE usuario
+    SET password_hash = p_password_hash
+    WHERE id_usuario = p_id_usuario;
+
+    p_mensaje := 'Contraseña actualizada correctamente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al actualizar contraseña: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_actualizar_password_usuario(IN p_id_usuario integer, IN p_password_hash character varying, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_actualizar_terapeuta(integer, character varying, character varying, character varying, character varying); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -208,17 +231,18 @@ CREATE PROCEDURE public.sp_consultar_agenda_paciente(IN p_id_paciente integer, I
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    OPEN p_cursor FOR 
-        SELECT v.id_sesion, v.fecha, v.hora_inicio, v.hora_fin, v.modalidad, v.estado_sesion, v.terapeuta, v.paciente 
+    OPEN p_cursor FOR
+        SELECT v.id_sesion, v.fecha, v.hora_inicio, v.hora_fin, v.modalidad, v.estado_sesion, v.terapeuta, v.paciente
         FROM vw_agenda_global v
         JOIN sesion s ON v.id_sesion = s.id_sesion
         JOIN asignacion_terapeuta_paciente a ON s.id_asignacion = a.id_asignacion
         WHERE a.id_paciente = p_id_paciente
         ORDER BY v.fecha DESC, v.hora_inicio DESC;
-        
+
     p_mensaje := 'Agenda del paciente recuperada exitosamente.';
-    
-    -- Eliminamos el bloque EXCEPTION temporalmente para ver el error real
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al recuperar agenda del paciente: ' || SQLERRM;
 END;
 $$;
 
@@ -251,6 +275,32 @@ $$;
 
 
 ALTER PROCEDURE public.sp_consultar_agenda_terapeuta(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_consultar_asignaciones_terapeuta(integer, refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_consultar_asignaciones_terapeuta(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT v.id_asignacion, v.terapeuta_encargado, v.paciente_asignado, v.fecha_inicio
+        FROM vw_asignaciones_vigentes v
+        JOIN asignacion_terapeuta_paciente a ON v.id_asignacion = a.id_asignacion
+        WHERE a.id_terapeuta = p_id_terapeuta
+          AND a.id_estado_asignacion = 1
+        ORDER BY v.fecha_inicio DESC;
+
+    p_mensaje := 'Asignaciones del terapeuta recuperadas exitosamente.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al recuperar asignaciones del terapeuta: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_consultar_asignaciones_terapeuta(IN p_id_terapeuta integer, INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_consultar_asignaciones_vigentes(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -329,13 +379,28 @@ CREATE PROCEDURE public.sp_consultar_metricas_dashboard(OUT p_total_pacientes in
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    -- Contamos el total histórico de las tablas principales
-    SELECT COUNT(*) INTO p_total_pacientes FROM paciente;
-    SELECT COUNT(*) INTO p_total_terapeutas FROM terapeuta;
-    SELECT COUNT(*) INTO p_total_asignaciones FROM asignacion_terapeuta_paciente;
-    
-    -- Contamos solo las sesiones donde la fecha coincida con el día actual del servidor
-    SELECT COUNT(*) INTO p_citas_hoy FROM sesion WHERE fecha = CURRENT_DATE;
+    SELECT COUNT(*) INTO p_total_pacientes
+    FROM paciente
+    WHERE id_estado_paciente = 1;
+
+    SELECT COUNT(*) INTO p_total_terapeutas
+    FROM terapeuta
+    WHERE id_estado_terapeuta = 1;
+
+    SELECT COUNT(*) INTO p_total_asignaciones
+    FROM asignacion_terapeuta_paciente
+    WHERE id_estado_asignacion = 1;
+
+    SELECT COUNT(*) INTO p_citas_hoy
+    FROM sesion
+    WHERE fecha = CURRENT_DATE
+      AND id_estado_sesion <> 3;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_total_pacientes := 0;
+        p_total_terapeutas := 0;
+        p_total_asignaciones := 0;
+        p_citas_hoy := 0;
 END;
 $$;
 
@@ -607,6 +672,29 @@ $$;
 ALTER PROCEDURE public.sp_listar_pacientes_sin_asignar(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
+-- Name: sp_listar_usuarios_para_migracion(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_listar_usuarios_para_migracion(INOUT p_cursor refcursor, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    OPEN p_cursor FOR
+        SELECT id_usuario, correo, password_hash
+        FROM usuario
+        ORDER BY id_usuario ASC;
+
+    p_mensaje := 'Usuarios listados para migración de hashes.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al listar usuarios: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_listar_usuarios_para_migracion(INOUT p_cursor refcursor, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
 -- Name: sp_obtener_modalidades(refcursor); Type: PROCEDURE; Schema: public; Owner: usuario
 --
 
@@ -693,6 +781,28 @@ $$;
 
 
 ALTER PROCEDURE public.sp_obtener_usuario_login(IN p_correo character varying, OUT p_id_usuario integer, OUT p_id_rol integer, OUT p_hash character varying, OUT p_id_estado integer, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_registrar_acceso_usuario(integer); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_registrar_acceso_usuario(IN p_id_usuario integer, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE usuario
+    SET ultimo_acceso = CURRENT_TIMESTAMP
+    WHERE id_usuario = p_id_usuario;
+
+    p_mensaje := 'Último acceso actualizado.';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_mensaje := 'Error al actualizar último acceso: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_registrar_acceso_usuario(IN p_id_usuario integer, OUT p_mensaje character varying) OWNER TO usuario;
 
 --
 -- Name: sp_registrar_avance_objetivo(integer, numeric, text, integer); Type: PROCEDURE; Schema: public; Owner: usuario
@@ -841,6 +951,92 @@ $$;
 
 
 ALTER PROCEDURE public.sp_reprogramar_sesion(IN p_id_sesion integer, IN p_nueva_fecha date, IN p_nueva_hora_inicio time without time zone, IN p_nueva_hora_fin time without time zone, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_validar_propiedad_asignacion(integer, integer); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_validar_propiedad_asignacion(IN p_id_asignacion integer, IN p_id_terapeuta integer, OUT p_es_propietario boolean, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_existe integer;
+BEGIN
+    SELECT COUNT(*) INTO v_existe
+    FROM asignacion_terapeuta_paciente
+    WHERE id_asignacion = p_id_asignacion
+      AND id_terapeuta = p_id_terapeuta
+      AND id_estado_asignacion = 1;
+
+    IF v_existe > 0 THEN
+        p_es_propietario := TRUE;
+        p_mensaje := 'Asignación autorizada para el terapeuta.';
+    ELSE
+        p_es_propietario := FALSE;
+        p_mensaje := 'Acceso denegado: la asignación no corresponde al terapeuta autenticado.';
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_es_propietario := FALSE;
+        p_mensaje := 'Error al validar propiedad de asignación: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_validar_propiedad_asignacion(IN p_id_asignacion integer, IN p_id_terapeuta integer, OUT p_es_propietario boolean, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_validar_propiedad_sesion(integer, integer); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_validar_propiedad_sesion(IN p_id_sesion integer, IN p_id_terapeuta integer, OUT p_tiene_acceso boolean, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_existe integer;
+BEGIN
+    SELECT COUNT(*) INTO v_existe
+    FROM sesion s
+    JOIN asignacion_terapeuta_paciente a ON s.id_asignacion = a.id_asignacion
+    WHERE s.id_sesion = p_id_sesion
+      AND a.id_terapeuta = p_id_terapeuta;
+
+    IF v_existe > 0 THEN
+        p_tiene_acceso := TRUE;
+        p_mensaje := 'Sesión autorizada para el terapeuta.';
+    ELSE
+        p_tiene_acceso := FALSE;
+        p_mensaje := 'Acceso denegado: la sesión no pertenece a los pacientes del terapeuta.';
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_tiene_acceso := FALSE;
+        p_mensaje := 'Error al validar propiedad de sesión: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_validar_propiedad_sesion(IN p_id_sesion integer, IN p_id_terapeuta integer, OUT p_tiene_acceso boolean, OUT p_mensaje character varying) OWNER TO usuario;
+
+--
+-- Name: sp_verificar_conexion(); Type: PROCEDURE; Schema: public; Owner: usuario
+--
+
+CREATE PROCEDURE public.sp_verificar_conexion(OUT p_ok boolean, OUT p_mensaje character varying)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    p_ok := TRUE;
+    p_mensaje := 'Conexión verificada correctamente con PostgreSQL (' || current_database() || ').';
+EXCEPTION
+    WHEN OTHERS THEN
+        p_ok := FALSE;
+        p_mensaje := 'Error al verificar conexión: ' || SQLERRM;
+END;
+$$;
+
+
+ALTER PROCEDURE public.sp_verificar_conexion(OUT p_ok boolean, OUT p_mensaje character varying) OWNER TO usuario;
 
 SET default_tablespace = '';
 
@@ -2656,55 +2852,55 @@ COPY public.tipo_alerta (id_tipo_alerta, nombre, descripcion) FROM stdin;
 --
 
 COPY public.usuario (id_usuario, id_rol, id_estado_usuario, correo, password_hash, fecha_creacion, ultimo_acceso) FROM stdin;
-2	2	1	terapeuta1@clinica.com	scrypt:32768:8:1$dummy$hash2	2026-10-17 19:55:18.010379	\N
-3	2	1	terapeuta2@clinica.com	scrypt:32768:8:1$dummy$hash3	2026-10-17 19:55:18.010379	\N
-4	2	1	terapeuta3@clinica.com	scrypt:32768:8:1$dummy$hash4	2026-10-17 19:55:18.010379	\N
-5	2	1	terapeuta4@clinica.com	scrypt:32768:8:1$dummy$hash5	2026-10-17 19:55:18.010379	\N
-6	2	1	terapeuta5@clinica.com	scrypt:32768:8:1$dummy$hash6	2026-10-17 19:55:18.010379	\N
-7	2	1	terapeuta6@clinica.com	scrypt:32768:8:1$dummy$hash7	2026-10-17 19:55:18.010379	\N
-8	2	1	terapeuta7@clinica.com	scrypt:32768:8:1$dummy$hash8	2026-10-17 19:55:18.010379	\N
-9	2	1	terapeuta8@clinica.com	scrypt:32768:8:1$dummy$hash9	2026-10-17 19:55:18.010379	\N
-10	2	1	terapeuta9@clinica.com	scrypt:32768:8:1$dummy$hash10	2026-10-17 19:55:18.010379	\N
-11	2	1	terapeuta10@clinica.com	scrypt:32768:8:1$dummy$hash11	2026-10-17 19:55:18.010379	\N
-12	3	1	paciente1@correo.com	scrypt:32768:8:1$dummy$hash12	2026-10-17 19:55:18.010379	\N
-13	3	1	paciente2@correo.com	scrypt:32768:8:1$dummy$hash13	2026-10-17 19:55:18.010379	\N
-14	3	1	paciente3@correo.com	scrypt:32768:8:1$dummy$hash14	2026-10-17 19:55:18.010379	\N
-15	3	1	paciente4@correo.com	scrypt:32768:8:1$dummy$hash15	2026-10-17 19:55:18.010379	\N
-16	3	1	paciente5@correo.com	scrypt:32768:8:1$dummy$hash16	2026-10-17 19:55:18.010379	\N
-17	3	1	paciente6@correo.com	scrypt:32768:8:1$dummy$hash17	2026-10-17 19:55:18.010379	\N
-18	3	1	paciente7@correo.com	scrypt:32768:8:1$dummy$hash18	2026-10-17 19:55:18.010379	\N
-19	3	1	paciente8@correo.com	scrypt:32768:8:1$dummy$hash19	2026-10-17 19:55:18.010379	\N
-20	3	1	paciente9@correo.com	scrypt:32768:8:1$dummy$hash20	2026-10-17 19:55:18.010379	\N
-21	3	1	paciente10@correo.com	scrypt:32768:8:1$dummy$hash21	2026-10-17 19:55:18.010379	\N
-22	3	1	paciente11@correo.com	scrypt:32768:8:1$dummy$hash22	2026-10-17 19:55:18.010379	\N
-23	3	1	paciente12@correo.com	scrypt:32768:8:1$dummy$hash23	2026-10-17 19:55:18.010379	\N
-24	3	1	paciente13@correo.com	scrypt:32768:8:1$dummy$hash24	2026-10-17 19:55:18.010379	\N
-25	3	1	paciente14@correo.com	scrypt:32768:8:1$dummy$hash25	2026-10-17 19:55:18.010379	\N
-26	3	1	paciente15@correo.com	scrypt:32768:8:1$dummy$hash26	2026-10-17 19:55:18.010379	\N
-27	3	1	paciente16@correo.com	scrypt:32768:8:1$dummy$hash27	2026-10-17 19:55:18.010379	\N
-28	3	1	paciente17@correo.com	scrypt:32768:8:1$dummy$hash28	2026-10-17 19:55:18.010379	\N
-29	3	1	paciente18@correo.com	scrypt:32768:8:1$dummy$hash29	2026-10-17 19:55:18.010379	\N
-30	3	1	paciente19@correo.com	scrypt:32768:8:1$dummy$hash30	2026-10-17 19:55:18.010379	\N
-31	3	1	paciente20@correo.com	scrypt:32768:8:1$dummy$hash31	2026-10-17 19:55:18.010379	\N
-32	3	1	paciente21@correo.com	scrypt:32768:8:1$dummy$hash32	2026-10-17 19:55:18.010379	\N
-33	3	1	paciente22@correo.com	scrypt:32768:8:1$dummy$hash33	2026-10-17 19:55:18.010379	\N
-34	3	1	paciente23@correo.com	scrypt:32768:8:1$dummy$hash34	2026-10-17 19:55:18.010379	\N
-35	3	1	paciente24@correo.com	scrypt:32768:8:1$dummy$hash35	2026-10-17 19:55:18.010379	\N
-36	3	1	paciente25@correo.com	scrypt:32768:8:1$dummy$hash36	2026-10-17 19:55:18.010379	\N
-37	3	1	paciente26@correo.com	scrypt:32768:8:1$dummy$hash37	2026-10-17 19:55:18.010379	\N
-38	3	1	paciente27@correo.com	scrypt:32768:8:1$dummy$hash38	2026-10-17 19:55:18.010379	\N
-39	3	1	paciente28@correo.com	scrypt:32768:8:1$dummy$hash39	2026-10-17 19:55:18.010379	\N
-40	3	1	paciente29@correo.com	scrypt:32768:8:1$dummy$hash40	2026-10-17 19:55:18.010379	\N
-41	3	1	paciente30@correo.com	scrypt:32768:8:1$dummy$hash41	2026-10-17 19:55:18.010379	\N
-42	3	2	paola.taha@gmail.com	ZeusFernando	2026-10-18 02:20:41.891364	\N
-45	3	1	paola.tah@gmail.com	ZeusFernando	2026-10-18 02:35:54.020426	\N
-46	2	1	zeus.fernando@gmail.com	Paolita	2026-10-18 03:05:44.988707	\N
-47	3	1	ce_aguilar@hotmail.com	Maxito01	2026-10-18 03:08:25.882202	\N
-1	1	1	admin@clinica.com	12345	2026-10-17 19:55:18.010379	\N
-50	2	1	paola.terapeuta@clinica.com	12345	2026-10-18 22:07:13.917424	\N
-51	3	1	carlos.paciente@clinica.com	12345	2026-10-18 23:06:25.68	\N
-48	3	2	eduardo.aguilar@directlink.net.mx	Manchas.2015	2026-10-18 03:37:49.230778	\N
-52	3	2	email@gmail.com	12345	2026-10-22 14:41:28.265484	\N
+1	1	1	admin@clinica.com	scrypt:32768:8:1$nJed2mU8SQdyNIlR$3359d818734171072be58ed9f13662d9b1533ca3b7482108386750bb4efc0c0df7e1f46e05c2a929be02e5aa83cb5de1d96d4f33411c1c94ad4b9fb2632957ad	2026-10-17 19:55:18.010379	\N
+2	2	1	terapeuta1@clinica.com	scrypt:32768:8:1$ezLfDsNtl3CFnK8C$14e046aafffceb28fa160eb28abdd79f67f0acdfeb57b5f41a8d7003cf059ef00878cf726cd2d8339e21e757433f498b84288b36a8ef3ebed71b5092d8f3cec3	2026-10-17 19:55:18.010379	\N
+3	2	1	terapeuta2@clinica.com	scrypt:32768:8:1$PxcVSXxGX5PCnkVp$d63a437a5d208e81c5527cba85513b40b28fdd00c42457b4e34918b715ee468abfc991f671d16bf7be825c37ad57016246ea3ca87ea0101a1161fc3cbfacdca0	2026-10-17 19:55:18.010379	\N
+4	2	1	terapeuta3@clinica.com	scrypt:32768:8:1$8dKXygXAi4MUdzOO$031ec4a37527549d248e5cd585de77dc46b7def51b3eb9cfea1c7509f35ea392401907a0a37df6bd1f7046a1f8f74db601ec21e20d8a9843135d7b08a75b0d86	2026-10-17 19:55:18.010379	\N
+5	2	1	terapeuta4@clinica.com	scrypt:32768:8:1$mlJbAqU6gqhW6eJ6$ee07c8520b311b0c717a1f90883eb6fc61acb0ecfe6fa8930a9680bfa1ddf324c5b47a00afd59be41bcb31da5af7e186273971cbc8489687aabda6ac7a92c03a	2026-10-17 19:55:18.010379	\N
+6	2	1	terapeuta5@clinica.com	scrypt:32768:8:1$czCuz1zobP64ImDe$fab873258219fcda8dca682723ab1991de3b95f92b1deedcbc8c8ea3dab52edfc0d113630fa943ae3bfbc3322f5cb5385e4a767b8fe2609b9a83aa729590369b	2026-10-17 19:55:18.010379	\N
+7	2	1	terapeuta6@clinica.com	scrypt:32768:8:1$RA82ln7CbwPSdAOf$62f957172a04d399fcff2b42e9f1a41f88949afd58ec21737cf2efa843b3bb7c9a1bce25c0fe9906ac96cc040026bada813516838e17dcad9076cd30147f672e	2026-10-17 19:55:18.010379	\N
+8	2	1	terapeuta7@clinica.com	scrypt:32768:8:1$WmbK7Uc1heKGxpFM$53e3469d89c090f04d3a860ca66ad8d002b238d60db101f65d48955fe980d339908932e94b69e0be87fa4f985c7957057f4443e94bebd082f3038ca73bd372bf	2026-10-17 19:55:18.010379	\N
+9	2	1	terapeuta8@clinica.com	scrypt:32768:8:1$gJWpV58lXoKEbjjM$c94470b37ba26a99e6e3bd7dff774a9c8653f680c55abdbf4feae2ee068cd372c93e79f08ecf8eebecbb84d3e62ef123f7cb26f99d2986bb918566b06da20d4d	2026-10-17 19:55:18.010379	\N
+10	2	1	terapeuta9@clinica.com	scrypt:32768:8:1$ucq6qCSmTWK7fGlL$3ac75c76abf4bb90a21c64047e67af3d9b0ed3f6562dca06abf6a2e01918ae33d1c0dce486f25658aa94a46dd8938ab62e4cda34d2ade54a8ebe671cde947898	2026-10-17 19:55:18.010379	\N
+11	2	1	terapeuta10@clinica.com	scrypt:32768:8:1$nXziezbpLltp91hT$038946bd69f533632f893d02036d108565d404967897d75436196834ad6a6107f15214a5c1a0cd104bb277e8adaf6e1ede2280ec30b6f928e1e4d4f8ede5c207	2026-10-17 19:55:18.010379	\N
+12	3	1	paciente1@correo.com	scrypt:32768:8:1$N32A2TxZzGOMBZlT$361faed09e0c6810cfd7fd231d3e97aca65c6800d337b6544d887bb617809a96355cc34884dcbb72a5f3416ca65c08a4bda4d2d65f01daf9bd688893e06dc34c	2026-10-17 19:55:18.010379	\N
+13	3	1	paciente2@correo.com	scrypt:32768:8:1$gPdkkEYKBCGB1F2v$23764701ea1403c171030b81d49a078e7ee146c6f8964b743a21db74ba437f0b2781b58b8807cf639c09a348d9c203f76ae9975defb546daaebea17af9ef9da9	2026-10-17 19:55:18.010379	\N
+14	3	1	paciente3@correo.com	scrypt:32768:8:1$a2TONRnNhItZaVat$59b23c4ebec173702da48b5a16df6f0db0cecafe4481b2307befbe88a6041d2c4f4d513b9aa4b565ae7d2367c9a34244f63d541ee1d0a0f1c55e0348f4e149cf	2026-10-17 19:55:18.010379	\N
+15	3	1	paciente4@correo.com	scrypt:32768:8:1$Ga5MpM7IKmywdJfy$74183073a89781c15261c6c704e7e20ea948b8e8ef88c587f1a8ea65742c924a9e17af013011fc463e7bc3e80cb38507dea71c1689dc2ff771af8bd140990ff6	2026-10-17 19:55:18.010379	\N
+16	3	1	paciente5@correo.com	scrypt:32768:8:1$jAvE001JM0bGF2XL$1e709a2e15506e666c4c48f4594a5e29664402c389aeee6e7f6744898deb64ef0241a1b6499598efdd879cca5bc6463fb984b97523a7324e6a7f6dbfc25d9e1c	2026-10-17 19:55:18.010379	\N
+17	3	1	paciente6@correo.com	scrypt:32768:8:1$D9GNhHaB34SiAQ8g$bd41b56c35197d4aa7e80991b36e24fe7db48e5ee22b2454c75479f70c511d506e821fb7e0ba1aa0922b80cb6f95e4c80fa7c4c236ce865338c432e233a2cc76	2026-10-17 19:55:18.010379	\N
+18	3	1	paciente7@correo.com	scrypt:32768:8:1$zl6cMPcO5QN2dBVC$57aff57a69190668a163aff3dccca1bd55f662a70f27d9e9fb368808b8fda276d67c81ea74f45dbcf8fbbc30ff200b7c4f5f1b3810e53f988e527d85de37d8c6	2026-10-17 19:55:18.010379	\N
+19	3	1	paciente8@correo.com	scrypt:32768:8:1$QSOR7Xup9HMkHASl$ef80f4d0fc5b840e803bb1777e0b2da13e468950ad01f32c930b2ae9af8a9fe712b074000b9cc12d140e56e42fe57968f34e1b33316a823f5250d596168877ac	2026-10-17 19:55:18.010379	\N
+20	3	1	paciente9@correo.com	scrypt:32768:8:1$RtRZpy9c9josm89m$19824c49911c99be47d494fc08b73a22be5288aa6e644562109c3de9736d541dec59361748ebc635f035172924a7f4dcd42b61e247bf7fc57bdcc8099daabf5e	2026-10-17 19:55:18.010379	\N
+21	3	1	paciente10@correo.com	scrypt:32768:8:1$YoM8uRkzFHRk7xf0$b29059a68dc378557b651e9b07fa43daa47cbf377dfe62d1bba03c59590c3fb6718d8fe716a4571c2baeb66ebefcf5898add37bf54ea02c9c95072c591bad11f	2026-10-17 19:55:18.010379	\N
+22	3	1	paciente11@correo.com	scrypt:32768:8:1$CFUrZf6pNpCAM73d$6bb103468a829a9ad8b322581488c194ffbd7d82e2557e54c9068514921f64843993a20a8ae9f0b6d0b450b027b142daa62ca6e1285d7767c7841ed98418ee33	2026-10-17 19:55:18.010379	\N
+23	3	1	paciente12@correo.com	scrypt:32768:8:1$9vBjFm1LqoC7e9NU$fd0be0741abffd2db99d62b2561c7333ba99391000192d11bab51e7de779b1b86a69a4180eefdc9403a99d18788d566c02b5d2767e2fa53cdbf790efab199b8f	2026-10-17 19:55:18.010379	\N
+24	3	1	paciente13@correo.com	scrypt:32768:8:1$G6MIQVX1r8bsiGa7$3fcea1a70ade61f823b235fb86a03b7810186c6fe24bc882cf3286a157c99774c3df61db68f4f2a9d714fed4f66e7baf0a3bc75c2455b2c2a937535e19d2e0e6	2026-10-17 19:55:18.010379	\N
+25	3	1	paciente14@correo.com	scrypt:32768:8:1$2oVKTNdTLzJHPCra$19dfe286c24ffd6c6b16d0d3a42480d2cd606741fe300d0753a7df81fc683bee3ac9eee485c9cfc180f43c0999b9887468676ff712ad925baf7d4a56c7b118cb	2026-10-17 19:55:18.010379	\N
+26	3	1	paciente15@correo.com	scrypt:32768:8:1$i8oIiUoyRrCHazTo$0d9075fe70fa8ec3e14af9335f5c3ac4c7c24ddc245cc60ff9fd6a2651ad903389dc14f1295b18e3b308204a9240551cc96ee13aa1c4aec721463456c1a057f6	2026-10-17 19:55:18.010379	\N
+27	3	1	paciente16@correo.com	scrypt:32768:8:1$PildSu37aZXH8jBP$a13c8ea4643a70cf61a3a7c03e9e8a3365e67ba60ec5d70c810172d89688a55cb02c0bcb959e652901864aaced0b8dd707c292b0d6cd91b988f8b7c44333b862	2026-10-17 19:55:18.010379	\N
+28	3	1	paciente17@correo.com	scrypt:32768:8:1$MPiv0ZHMy4NbV5sR$673b89da4b34ef0313e79dec1a9145f85cee29f8f8f26fd5efb420de3ca4ede0242708408aed14b7a81b13c7f5d951ba30532c571d3904b252aad357599bdc79	2026-10-17 19:55:18.010379	\N
+29	3	1	paciente18@correo.com	scrypt:32768:8:1$iNBC8Fiaze9iXhra$309e2c43809eb19615f4a4fca001d6a9e279a3d0b464728f4240fc0528661ada5852939443948d5bc3082f3256befb6145ab07ca3a0dc9c0df3aeb0d63c10624	2026-10-17 19:55:18.010379	\N
+30	3	1	paciente19@correo.com	scrypt:32768:8:1$zeCrzi10nr251bUj$1f9e08e0bfa93a716fb59d80244481014f75ea9493f0756683f0a679111645fd0c4e1c85b15d277d58c9b3606ec9e7c4093d111cb4f8c408d73ac787df2c9f28	2026-10-17 19:55:18.010379	\N
+31	3	1	paciente20@correo.com	scrypt:32768:8:1$cdjSVSFblTQb8Sf7$104c2d674b04ce5756457db121f3329f8904a237eaa8c29b2c17e5cd7283926791bc0f3d9cac3128e59bdf3988c94eba46800ec6e22f303e7239a061ca666cd9	2026-10-17 19:55:18.010379	\N
+32	3	1	paciente21@correo.com	scrypt:32768:8:1$XFX1NNENJlrSu4k6$1087ee6c6f27eabee0f99a5c4faa897e802a43f87dacf6ba19672b2b8cab26f27be5cf39702abc1e0c7f6a612c08c4c993b51e1c2c3197b8c2d0d522b8c8cb54	2026-10-17 19:55:18.010379	\N
+33	3	1	paciente22@correo.com	scrypt:32768:8:1$e6fgQO8yJdoNdafT$83de83dde97e482854306a4845618745bf9213daaed992c0e984024425cdbe539e12a6d9fdd482c10372aa12a5f831746063a89abd75a9c035ea2c6991adf997	2026-10-17 19:55:18.010379	\N
+34	3	1	paciente23@correo.com	scrypt:32768:8:1$7g6E3yqTF12Hc4QA$ee8cfc2abe5cda9dca957ba9904e6feffb01d7d97f3033c6c1714175ffddf696d052079751a7ea67bdd665297b13e1789102ecaf8d9c5ec074f0b15dc0fcae90	2026-10-17 19:55:18.010379	\N
+35	3	1	paciente24@correo.com	scrypt:32768:8:1$4ofdOSpIeJWPjis6$845640873a4b0d44376a742502eaeef59b54e826d253549093d4b0e457c5254420ed37763aef72e8fc441585f21fdd37a7394cc654f0fe60f4aeb29e79d0a1c5	2026-10-17 19:55:18.010379	\N
+36	3	1	paciente25@correo.com	scrypt:32768:8:1$IvN23567ploheXa3$8b9b35977ad1bb81edf40a396545c97bdec9f254a145cf9121df267026aca593bd119fa264b05c60efb003c72cf62064bbdb0a9745675021ddf214775532a067	2026-10-17 19:55:18.010379	\N
+37	3	1	paciente26@correo.com	scrypt:32768:8:1$xDQhzPHbw0KaU20X$5532adf7eca3e871f0708a79e9529fa9d035196fced626777a84139c13bb893503053cb0630beea6dfb2dbca63e8972f93bf86e8fe9a111c7ab7c603f8534bbf	2026-10-17 19:55:18.010379	\N
+38	3	1	paciente27@correo.com	scrypt:32768:8:1$tKKaJf4ocW236O2y$d8ab79bd4af00df464c77f55c11fcdea0273d996c638bc6c52b4546da608246455108782212c87db85342ea8af34ce0e3375e738e881d72c616c59df33410e4b	2026-10-17 19:55:18.010379	\N
+39	3	1	paciente28@correo.com	scrypt:32768:8:1$KE9F116dqMrYKK3n$52cc2d5553dba85c1123e23eaf6a036769bf4e8df4b270ff34b068e91f8e888a049b1f805e4b25e8c2c4aa28f9f7316ab06ac7573bfe763aa102990383b64ecb	2026-10-17 19:55:18.010379	\N
+40	3	1	paciente29@correo.com	scrypt:32768:8:1$pSJv6VRoih9V0p6X$3751f6f5a6a392ddbc840017041e1d05024cad9fe8227a9b5105e223b6b9efffc623da7b2a28efaddabca9edd850d4fae007e657e284bbe9fbe77ef93320e3bb	2026-10-17 19:55:18.010379	\N
+41	3	1	paciente30@correo.com	scrypt:32768:8:1$0kuc3WDmleU9SRxU$2a78d0ca09e41e6a5328cb63f0a415b95709fef43a91fe56b231c74eee651bb262018d72eae9eac7a52c1b11344bdf4001d8db90dd09a6ba73d893df38504625	2026-10-17 19:55:18.010379	\N
+42	3	2	paola.taha@gmail.com	scrypt:32768:8:1$PjqhQKDOlJ5V0ieN$1bdff77a6fb39e641bb7476e306d3b256d82634b7954e5b77747adf017eafb68ac1a05da5b69e23ff73cbbf76a449b0ffff6f392697b1107511b8df4cb3cedde	2026-10-18 02:20:41.891364	\N
+45	3	1	paola.tah@gmail.com	scrypt:32768:8:1$i6pUoBBoKoS6ekJE$05079ef984741ee5b69013d4f9e5a44a284f7cf631f156abe80ccbd09df89a8ca979bdbfbcb5a3718d3102664def3f3d88370b24eed24aef93b66b9086ee4303	2026-10-18 02:35:54.020426	\N
+46	2	1	zeus.fernando@gmail.com	scrypt:32768:8:1$gfNSUipAUjChgcXi$a87a0c0292ce19de18c17048c829fa8e07744e6340d5aeb7e47fd8b12d429b69f1a56241279e9ac292fc373cf75ca2363800f67e9db671e9e673bb9213ebed92	2026-10-18 03:05:44.988707	\N
+47	3	1	ce_aguilar@hotmail.com	scrypt:32768:8:1$z6clz8BuPzfmuhKd$c3d28d85331378f3664cf59bf0e21b61b990dc6e4d71bb8e1cbb8e77ed825b2bfdc984c8323b6fbb029a2d39e158bd991747b588bfb8ce5ec0d96f9b39344ac3	2026-10-18 03:08:25.882202	\N
+48	3	2	eduardo.aguilar@directlink.net.mx	scrypt:32768:8:1$28vHEWzqcAyOcrBt$cc8a44db8f8270c48167f57e9e9cf2a81927647e8a0f3402ef5dcbf14788674f08889faffdc6dbafacc9b7b10e2e41f9413959b736e5a377be559932e2d17220	2026-10-18 03:37:49.230778	\N
+50	2	1	paola.terapeuta@clinica.com	scrypt:32768:8:1$CGMEvwdI30D4WPyb$abdd0cc43bcfbdcf9c63236f3a269b7fdf584aa10fff8f7a075e9d0ee04deef62752d102c6a8c0aa504d5ced279c3ef3e2cfb6c1661ad6b4ed1bbe9d8aae93e6	2026-10-18 22:07:13.917424	\N
+51	3	1	carlos.paciente@clinica.com	scrypt:32768:8:1$pFvaN6CSan2V1Eg6$58c588d643ae437b3ea2be96c7740930127e9f4b87e5ae46f3b62349ea7abb2216cf86d5edbd6bf2e8f2a415d6ff84fe3d130c2ad2f63416e5f613f16b069766	2026-10-18 23:06:25.68	\N
+52	3	2	email@gmail.com	scrypt:32768:8:1$F3qnbKPJ1rW0UlEH$947e6f947d9078a28a173628524762a19121466f6d1497c9743e3213b483b5869100e487d55f26a6d222df6b174a2d3236f7829ffd61b6eb96902e9c33981770	2026-10-22 14:41:28.265484	\N
 \.
 
 
@@ -3460,5 +3656,5 @@ ALTER TABLE ONLY public.usuario
 -- PostgreSQL database dump complete
 --
 
-\unrestrict eAgh38gE6xsFTLfAnP3ArlknTsrz3MJqY2Iu65H9y5Rl3X3MQXKSYL8xD9FC51r
+\unrestrict PuNGCWdCibQriNAGAV9wSyijN7QJ0DkXpLXI8QCcswWTJhCWfpeTltFnHlCJVNA
 

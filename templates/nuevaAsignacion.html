@@ -1,63 +1,34 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Nueva Asignación</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
-</head>
-<body>
-    <nav>
-        <h2>Sistema de Gestión Clínica</h2>
-        <div>
-            <!-- Solo el Admin (rol 1) ve el catálogo global -->
-            {% if session.get('usuario_rol') == 1 %}
-                <a href="{{ url_for('principal') }}">Inicio</a>
-                <a href="{{ url_for('pacientes') }}">Pacientes</a>
-                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
-                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
-            {% endif %}
+{% extends "base.html" %}
 
-            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
-            {% if session.get('usuario_rol') == 2 %}
-                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
-            {% endif %}
+{% block title %}Nueva Asignación - Gestión Clínica{% endblock %}
 
-            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
-            <a href="{{ url_for('sesiones') }}">Agenda</a>
-            
-            <!-- Botón de Salir para todos -->
-            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
+{% block content %}
+<div class="contenedor">
+    <h1>Vincular Terapeuta a Paciente</h1>
+    <form action="{{ url_for('registra_asignacion') }}" method="POST" style="margin-top: 1.5rem;">
+        <div class="grupo-form">
+            <label for="id_terapeuta">Seleccionar Terapeuta:</label>
+            <select id="id_terapeuta" name="id_terapeuta" required>
+                <option value="" disabled selected>-- Elija un profesional --</option>
+                {% for t in Terapeutas %}
+                <option value="{{ t[0] }}">{{ t[1] }} {{ t[2] }} (Cédula: {{ t[4] }})</option>
+                {% endfor %}
+            </select>
         </div>
-    </nav>
 
-    <div class="contenedor">
-        <h1>Vincular Terapeuta a Paciente</h1>
-        <form action="{{ url_for('registra_asignacion') }}" method="POST" style="margin-top: 1.5rem;">
-            
-            <div class="grupo-form">
-                <label>Seleccionar Terapeuta:</label>
-                <select name="id_terapeuta" required>
-                    <option value="" disabled selected>-- Elija un profesional --</option>
-                    {% for t in Terapeutas %}
-                    <option value="{{ t[0] }}">{{ t[1] }} {{ t[2] }} (Cédula: {{ t[4] }})</option>
-                    {% endfor %}
-                </select>
-            </div>
+        <div class="grupo-form">
+            <label for="id_paciente">Seleccionar Paciente (solo pacientes activos sin asignar):</label>
+            <select id="id_paciente" name="id_paciente" required>
+                <option value="" disabled selected>-- Elija un paciente libre --</option>
+                {% for p in Pacientes %}
+                {# Contrato sp_listar_pacientes_sin_asignar: (0: id_paciente, 1: nombre_completo) #}
+                <option value="{{ p[0] }}">{{ p[1] }}</option>
+                {% endfor %}
+            </select>
+        </div>
 
-            <div class="grupo-form">
-                <label>Seleccionar Paciente (Solo aparecen los no asignados):</label>
-                <select name="id_paciente" required>
-                    <option value="" disabled selected>-- Elija un paciente libre --</option>
-                    {% for p in Pacientes %}
-                    <!-- Asumiendo que sp_listar_pacientes_sin_asignar devuelve: id, nombre, paterno, materno... -->
-                    <option value="{{ p[0] }}">{{ p[1] }} {{ p[2] }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-
-            <button type="submit" class="btn btn-primario" style="margin-top: 1rem;">Confirmar Vinculación</button>
-        </form>
-    </div>
-</body>
-</html>
-
+        <button type="submit" class="btn btn-primario" style="margin-top: 1rem;">Confirmar Vinculación</button>
+        <a href="{{ url_for('asignaciones') }}" class="btn" style="background-color: #e2e8f0; color: #334155; margin-left: 0.5rem;">Cancelar</a>
+    </form>
+</div>
+{% endblock %}

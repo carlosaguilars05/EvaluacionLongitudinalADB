@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Sistema de Gestión Clínica{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+    <nav>
+        <h2>Sistema de Gestión Clínica</h2>
+        <div class="nav-enlaces">
+            {% set rol = session.get('usuario_rol') %}
+            {% if rol == 1 %}
+                <a href="{{ url_for('principal') }}">Inicio</a>
+                <a href="{{ url_for('pacientes') }}">Pacientes</a>
+                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
+                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
+            {% elif rol == 2 %}
+                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
+            {% endif %}
+
+            <a href="{{ url_for('sesiones') }}">Agenda</a>
+
+            <span class="nav-usuario">
+                {% if rol == 1 %}Admin{% elif rol == 2 %}Terapeuta{% elif rol == 3 %}Paciente{% endif %}:
+                {{ session.get('usuario_correo') }}
+            </span>
+
+            <a href="{{ url_for('logout') }}" class="btn-salir">Salir</a>
+        </div>
+    </nav>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="mensajes-flash">
+                {% for category, message in messages %}
+                    <div class="alerta {% if category == 'error' %}alerta-error{% else %}alerta-success{% endif %}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="aviso-clinico">
+        <strong>Aviso clínico importante:</strong> Esta plataforma es una herramienta de apoyo al seguimiento terapéutico y con fines académicos;
+        <strong>no sustituye la atención médica o psicológica profesional ni debe utilizarse para atender emergencias.</strong>
+        Ante una crisis inmediata, comunícate con los servicios de emergencia locales (911) o la Línea de la Vida (800 911 2000).
+    </footer>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

@@ -1,75 +1,48 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Registrar Paciente</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
-</head>
-<body>
-    <nav>
-        <h2>Sistema de Gestión Clínica</h2>
-        <div>
-            <!-- Solo el Admin (rol 1) ve el catálogo global -->
-            {% if session.get('usuario_rol') == 1 %}
-                <a href="{{ url_for('principal') }}">Inicio</a>
-                <a href="{{ url_for('pacientes') }}">Pacientes</a>
-                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
-                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
-            {% endif %}
+{% extends "base.html" %}
 
-            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
-            {% if session.get('usuario_rol') == 2 %}
-                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
-            {% endif %}
+{% block title %}Registrar Paciente - Gestión Clínica{% endblock %}
 
-            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
-            <a href="{{ url_for('sesiones') }}">Agenda</a>
-            
-            <!-- Botón de Salir para todos -->
-            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
+{% block content %}
+<div class="contenedor">
+    <h1>Registrar Nuevo Paciente</h1>
+    <form action="{{ url_for('registra') }}" method="POST" style="margin-top: 1.5rem;">
+        <div class="grupo-form">
+            <label for="correo">Correo Electrónico (Usuario):</label>
+            <input id="correo" type="email" name="correo" required>
         </div>
-    </nav>
-
-    <div class="contenedor">
-        <h1>Registrar Nuevo Paciente</h1>
-        <form action="{{ url_for('registra') }}" method="POST" style="margin-top: 1.5rem;">
-            <div class="grupo-form">
-                <label>Correo Electrónico (Usuario):</label>
-                <input type="email" name="correo" required>
-            </div>
-            <div class="grupo-form">
-                <label>Contraseña:</label>
-                <input type="password" name="password_hash" required>
-            </div>
-            <div class="grupo-form">
-                <label>Nombres:</label>
-                <input type="text" name="nombres" required>
-            </div>
-            <div class="grupo-form">
-                <label>Apellido Paterno:</label>
-                <input type="text" name="apellido_paterno" required>
-            </div>
-            <div class="grupo-form">
-                <label>Apellido Materno:</label>
-                <input type="text" name="apellido_materno">
-            </div>
-            <div class="grupo-form">
-                <label>Fecha de Nacimiento:</label>
-                <input type="date" name="fecha_nacimiento" required>
-            </div>
-            <div class="grupo-form">
-                <label>Sexo:</label>
-                <select name="sexo" required>
-                    <option value="Femenino">Femenino</option>
-                    <option value="Masculino">Masculino</option>
-                </select>
-            </div>
-            <div class="grupo-form">
-                <label>Teléfono:</label>
-                <input type="text" name="telefono">
-            </div>
-            <button type="submit" class="btn btn-primario">Guardar Paciente</button>
-        </form>
-    </div>
-</body>
-</html>
+        <div class="grupo-form">
+            <label for="password_hash">Contraseña:</label>
+            <input id="password_hash" type="password" name="password_hash" required minlength="5">
+        </div>
+        <div class="grupo-form">
+            <label for="nombres">Nombres:</label>
+            <input id="nombres" type="text" name="nombres" required>
+        </div>
+        <div class="grupo-form">
+            <label for="apellido_paterno">Apellido Paterno:</label>
+            <input id="apellido_paterno" type="text" name="apellido_paterno" required>
+        </div>
+        <div class="grupo-form">
+            <label for="apellido_materno">Apellido Materno:</label>
+            <input id="apellido_materno" type="text" name="apellido_materno">
+        </div>
+        <div class="grupo-form">
+            <label for="fecha_nacimiento">Fecha de Nacimiento:</label>
+            <input id="fecha_nacimiento" type="date" name="fecha_nacimiento" required>
+        </div>
+        <div class="grupo-form">
+            <label for="sexo">Sexo:</label>
+            <select id="sexo" name="sexo" required>
+                <option value="Femenino">Femenino</option>
+                <option value="Masculino">Masculino</option>
+            </select>
+        </div>
+        <div class="grupo-form">
+            <label for="telefono">Teléfono:</label>
+            <input id="telefono" type="text" name="telefono">
+        </div>
+        <button type="submit" class="btn btn-primario">Guardar Paciente</button>
+        <a href="{{ url_for('pacientes') }}" class="btn" style="background-color: #e2e8f0; color: #334155; margin-left: 0.5rem;">Cancelar</a>
+    </form>
+</div>
+{% endblock %}

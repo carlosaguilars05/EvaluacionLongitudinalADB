@@ -1,41 +1,15 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Terapeutas Registrados</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/estilos.css') }}">
-</head>
-<body>
-    <nav>
-        <h2>Sistema de Gestión Clínica</h2>
-        <div>
-            <!-- Solo el Admin (rol 1) ve el catálogo global -->
-            {% if session.get('usuario_rol') == 1 %}
-                <a href="{{ url_for('principal') }}">Inicio</a>
-                <a href="{{ url_for('pacientes') }}">Pacientes</a>
-                <a href="{{ url_for('terapeutas') }}">Terapeutas</a>
-                <a href="{{ url_for('asignaciones') }}">Asignaciones</a>
-            {% endif %}
+{% extends "base.html" %}
 
-            <!-- Solo el Terapeuta (rol 2) ve a sus propios pacientes -->
-            {% if session.get('usuario_rol') == 2 %}
-                <a href="{{ url_for('mis_pacientes') }}">Mis Pacientes</a>
-            {% endif %}
+{% block title %}Terapeutas Registrados - Gestión Clínica{% endblock %}
 
-            <!-- Todos (Admin, Terapeuta y Paciente) ven la Agenda -->
-            <a href="{{ url_for('sesiones') }}">Agenda</a>
-            
-            <!-- Botón de Salir para todos -->
-            <a href="{{ url_for('logout') }}" style="background-color: #ef4444; color: white; padding: 0.3rem 0.8rem; border-radius: 4px; margin-left: 1rem;">Salir</a>
-        </div>
-    </nav>
+{% block content %}
+<div class="contenedor">
+    <div class="encabezado-seccion">
+        <h1>Directorio de Terapeutas Activos</h1>
+        <a href="{{ url_for('insertarTerapeuta') }}" class="btn btn-primario">+ Nuevo Terapeuta</a>
+    </div>
 
-    <div class="contenedor">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h1>Directorio de Terapeutas Activos</h1>
-            <a href="{{ url_for('insertarTerapeuta') }}" class="btn btn-primario">+ Nuevo Terapeuta</a>
-        </div>
-
+    <div class="tabla-responsive">
         <table>
             <thead>
                 <tr>
@@ -62,9 +36,13 @@
                         </form>
                     </td>
                 </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" style="text-align: center; color: #64748b;">No hay terapeutas activos registrados.</td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
-</body>
-</html>
+</div>
+{% endblock %}

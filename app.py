@@ -1,502 +1,565 @@
-from flask import Flask, request, render_template, redirect, url_for, session
+from functools import wraps
+import os
+import secrets
+
+from dotenv import load_dotenv
+from flask import Flask, flash, redirect, render_template, request, session, url_for
 import psycopg
+from werkzeug.security import check_password_hash, generate_password_hash
+
+# Cargar variables de entorno (.env en desarrollo local; variables del sistema en GCP)
+load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = 'clave_secreta_clinica'
 
-# Configuracion de base de datos
-DB_HOST = 'localhost'
-DB_USER = 'usuario'
-DB_PASSWORD = ''
-DB_NAME = 'BD'
+# Configuración segura de sesión desde variables de entorno
+_secret_key = os.environ.get("FLASK_SECRET_KEY")
+if not _secret_key:
+    _secret_key = secrets.token_hex(32)
+    app.logger.warning(
+        "FLASK_SECRET_KEY no definida en el entorno; se generó una clave efímera para esta ejecución."
+    )
 
-print("Aplicacion conectada a la Base de Datos")
+app.secret_key = _secret_key
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_COOKIE_SECURE", "false").lower() == "true"
+
+# Configuración de PostgreSQL (local o Cloud SQL for PostgreSQL)
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+DB_NAME = os.environ.get("DB_NAME", "BD")
+DB_USER = os.environ.get("DB_USER", "usuario")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+DB_SSLMODE = os.environ.get("DB_SSLMODE", "prefer")
+
 
 def conectar():
-    return psycopg.connect(
-        host = DB_HOST,
-        dbname = DB_NAME,
-        user = DB_USER,
-        password = DB_PASSWORD
-    )
+    """Abre una conexión segura a PostgreSQL (TCP o Unix socket de Cloud SQL)."""
+    params = {
+        "host": DB_HOST,
+        "dbname": DB_NAME,
+        "user": DB_USER,
+        "password": DB_PASSWORD,
+    }
+    # Si no es Unix socket de Cloud SQL (/cloudsql/...), incluir puerto y SSL
+    if not DB_HOST.startswith("/"):
+        params["port"] = DB_PORT
+        params["sslmode"] = DB_SSLMODE
+    return psycopg.connect(**params)
+
+
+def verificar_conexion_bd():
+    """Comprueba la conexión real a PostgreSQL ejecutando un Stored Procedure."""
+    try:
+        with conectar() as conexion:
+            with conexion.cursor() as cur:
+                cur.execute("CALL sp_verificar_conexion(NULL, NULL)")
+                ok, mensaje = cur.fetchone()
+        return bool(ok), mensaje
+    except Exception as exc:
+        return False, f"No se pudo conectar a PostgreSQL: {exc}"
+
+
+def rol_requerido(*roles_permitidos):
+    """Decorador RBAC: restringe el acceso a los roles autorizados (1=Admin, 2=Terapeuta, 3=Paciente)."""
+    def decorador(vista):
+        @wraps(vista)
+        def envuelta(*args, **kwargs):
+            rol_actual = session.get("usuario_rol")
+            if rol_actual not in roles_permitidos:
+                flash("Acceso denegado. No cuentas con permisos para esta sección.", "error")
+                if rol_actual == 1:
+                    return redirect(url_for("principal"))
+                return redirect(url_for("sesiones"))
+            return vista(*args, **kwargs)
+        return envuelta
+    return decorador
+
 
 @app.before_request
 def proteger_rutas():
-    # Rutas que NO requieren estar logueado (login y los archivos CSS)
-    rutas_publicas = ['login', 'static']
-    
-    # Si la ruta que piden no es pública y no hay sesión activa... ¡Para afuera!
-    if request.endpoint not in rutas_publicas and 'usuario_id' not in session:
-        return redirect(url_for('login'))
+    """Guardia global: exige sesión autenticada para toda ruta no pública."""
+    rutas_publicas = ["login", "static"]
+    if request.endpoint not in rutas_publicas and "usuario_id" not in session:
+        return redirect(url_for("login"))
 
-# Landing page
-@app.route('/')
+
+# ==============================================================================
+# Inicio / Dashboard (Admin)
+# ==============================================================================
+@app.route("/")
 def principal():
-    rol = session.get('usuario_rol')
-    
-    # Si es Terapeuta (2) o Paciente (3), los mandamos directo a su agenda
-    if rol in [2, 3]:
-        return redirect(url_for('sesiones'))
-        
-    # Si es Administrador (1), le calculamos y mostramos el Dashboard
-    conexion = conectar()
-    cur = conexion.cursor()
-    
-    cur.execute("CALL SP_Consultar_Metricas_Dashboard(NULL, NULL, NULL, NULL)")
-    resultado = cur.fetchone()
-    
-    conexion.commit()
-    cur.close()
-    conexion.close()
-    
-    metricas = {
-        'pacientes': resultado[0],
-        'terapeutas': resultado[1],
-        'asignaciones': resultado[2],
-        'citas_hoy': resultado[3]
-    }
-    
-    return render_template('index.html', metricas=metricas)
-
-# Obtener pacientes
-@app.route('/pacientes')
-def pacientes():
-
-    if session.get('usuario_rol') != 1:
-        return redirect(url_for('sesiones'))
-    conexion = conectar()
-    cur = conexion.cursor()
-
-    # Ejecutamos el Stored Procedure (1 = Activos)
-    cur.execute("CALL SP_Consultar_Pacientes(1, 'cursor_pacientes', NULL)")
-
-    # Recuperamos los datos con el refcursor
-    cur.execute("FETCH ALL FROM cursor_pacientes")
-    Pacientes = cur.fetchall()
-
-    cur.close()
-    conexion.close()
-
-    return render_template('registros.html', Pacientes = Pacientes)
-
-# Vista formulario insertar paciente
-@app.route('/insertar')
-def insertar():
-    return render_template('insertar.html')
-
-# Guardar nuevo paciente
-@app.route('/registra', methods=['POST'])
-def registra():
-    correo = request.form.get('correo')
-    password_hash = request.form.get('password_hash')
-    nombres = request.form.get('nombres')
-    apellido_paterno = request.form.get('apellido_paterno')
-    apellido_materno = request.form.get('apellido_materno') or None
-    fecha_n = request.form.get('fecha_nacimiento')
-    sexo = request.form.get('sexo') or None
-    tel = request.form.get('telefono') or None
-
-    conexion = conectar()
-    cur = conexion.cursor()
-    cur.execute(
-        "CALL SP_Registrar_Paciente(%s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL)",
-        (correo, password_hash, nombres, apellido_paterno, apellido_materno, fecha_n, sexo, tel)
-    )
-    conexion.commit()
-    cur.close()
-    conexion.close()
-
-    return redirect(url_for('pacientes'))
-
-# Vista formulario editar paciente
-@app.route('/editar/<int:id_paciente>', methods=['GET'])
-def editar(id_paciente):
-    conexion = conectar()
-    cur = conexion.cursor()
-    id_paciente = int(id_paciente)
-
-    cur.execute("CALL SP_Obtener_Paciente_Por_ID(%s, 'cursor_paciente', NULL)", (id_paciente,))
-    cur.execute("FETCH ALL FROM cursor_paciente")
-    Paciente = cur.fetchone()
-
-    cur.close()
-    conexion.close()
-    return render_template('actualizar.html', Paciente = Paciente)
-
-# Guardar cambios del paciente
-@app.route('/actualizar', methods=['POST'])
-def actualizar():
-    id_paciente = request.form.get('id_paciente')
-    tel = request.form.get('telefono') or None
-    nombres = request.form.get('nombres')
-    apellido_paterno = request.form.get('apellido_paterno')
-    apellido_materno = request.form.get('apellido_materno') or None
-
-    conexion = conectar()
-    cur = conexion.cursor()
-    cur.execute(
-        """
-        CALL SP_Actualizar_Paciente(
-            %s, %s, %s, %s, %s, NULL
-        )
-        """,
-        (id_paciente, tel, nombres, apellido_paterno, apellido_materno)
-    )
-    conexion.commit()
-    cur.close()
-    conexion.close()
-    return redirect(url_for('pacientes'))
-
-# Baja lógica de paciente
-@app.route('/borrar/<int:id_paciente>', methods=['POST'])
-def borrar(id_paciente):
-    conexion = conectar()
-    cur = conexion.cursor()
-    cur.execute("CALL SP_Dar_Baja_Paciente(%s, NULL)", (id_paciente,))
-    conexion.commit()
-    cur.close()
-    conexion.close()
-
-    return redirect(url_for('pacientes'))
-
-# Obtener terapeutas activos
-@app.route('/terapeutas')
-def terapeutas():
-    if session.get('usuario_rol') != 1:
-        return redirect(url_for('sesiones'))
-    conexion = conectar()
-    cur = conexion.cursor()
-
-    # Ejecutamos el Stored Procedure (1 = Activos)
-    cur.execute("CALL SP_Consultar_Terapeutas(1, 'cursor_terapeutas', NULL)")
-
-    # Recuperamos los datos con el refcursor
-    cur.execute("FETCH ALL FROM cursor_terapeutas")
-    Terapeutas = cur.fetchall()
-
-    cur.close()
-    conexion.close()
-
-    return render_template('terapeutas.html', Terapeutas = Terapeutas)
-
-# Vista formulario insertar terapeuta
-@app.route('/insertarTerapeuta')
-def insertarTerapeuta():
-    return render_template('insertarTerapeuta.html')
-
-# Guardar nuevo terapeuta
-@app.route('/registra-terapeuta', methods=['POST'])
-def registra_terapeuta():
-    correo = request.form.get('correo')
-    password_hash = request.form.get('password_hash')
-    nombres = request.form.get('nombres')
-    apellido_paterno = request.form.get('apellido_paterno')
-    apellido_materno = request.form.get('apellido_materno') or None
-    cedula = request.form.get('cedula_profesional')
-
-    conexion = conectar()
-    cur = conexion.cursor()
-    cur.execute(
-        "CALL SP_Registrar_Terapeuta(%s, %s, %s, %s, %s, %s, NULL, NULL)",
-        (correo, password_hash, nombres, apellido_paterno, apellido_materno, cedula)
-    )
-    conexion.commit()
-    cur.close()
-    conexion.close()
-
-    return redirect(url_for('terapeutas'))
-
-# Vista formulario editar terapeuta
-@app.route('/editarTerapeuta/<int:id_terapeuta>', methods=['GET'])
-def editarTerapeuta(id_terapeuta):
-    conexion = conectar()
-    cur = conexion.cursor()
-    id_terapeuta = int(id_terapeuta)
-
-    cur.execute("CALL SP_Obtener_Terapeuta_Por_ID(%s, 'cursor_terapeuta', NULL)", (id_terapeuta,))
-    cur.execute("FETCH ALL FROM cursor_terapeuta")
-    Terapeuta = cur.fetchone()
-
-    cur.close()
-    conexion.close()
-    return render_template('actualizarTerapeuta.html', Terapeuta = Terapeuta)
-
-# Guardar cambios del terapeuta
-@app.route('/actualizar-terapeuta', methods=['POST'])
-def actualizar_terapeuta():
-    id_terapeuta = request.form.get('id_terapeuta')
-    nombres = request.form.get('nombres')
-    apellido_paterno = request.form.get('apellido_paterno')
-    apellido_materno = request.form.get('apellido_materno') or None
-    cedula = request.form.get('cedula_profesional')
-
-    conexion = conectar()
-    cur = conexion.cursor()
-    cur.execute(
-        """
-        CALL SP_Actualizar_Terapeuta(
-            %s, %s, %s, %s, %s, NULL
-        )
-        """,
-        (id_terapeuta, nombres, apellido_paterno, apellido_materno, cedula)
-    )
-    conexion.commit()
-    cur.close()
-    conexion.close()
-
-    return redirect(url_for('terapeutas'))
-
-# Baja lógica de terapeuta
-@app.route('/borrarTerapeuta/<int:id_terapeuta>', methods=['POST'])
-def borrarTerapeuta(id_terapeuta):
-    conexion = conectar()
-    cur = conexion.cursor()
-    cur.execute("CALL SP_Dar_Baja_Terapeuta(%s, NULL)", (id_terapeuta,))
-    conexion.commit()
-    cur.close()
-    conexion.close()
-
-    return redirect(url_for('terapeutas'))
-
-# Listar las asignaciones activas
-@app.route('/asignaciones')
-def asignaciones():
-    if session.get('usuario_rol') != 1:
-        return redirect(url_for('sesiones'))
-    conexion = conectar()
-    cur = conexion.cursor()
-
-    cur.execute("CALL SP_Consultar_Asignaciones_Vigentes('cursor_asignaciones', NULL)")
-    cur.execute("FETCH ALL FROM cursor_asignaciones")
-    Asignaciones = cur.fetchall()
-
-    cur.close()
-    conexion.close()
-    return render_template('asignaciones.html', Asignaciones=Asignaciones)
-
-# Vista formulario para crear una nueva asignación
-@app.route('/nuevaAsignacion')
-def nuevaAsignacion():
-    conexion = conectar()
-    cur = conexion.cursor()
-
-    # 1. Obtener terapeutas activos (estado = 1) para el dropdown
-    cur.execute("CALL SP_Consultar_Terapeutas(1, 'cursor_t', NULL)")
-    cur.execute("FETCH ALL FROM cursor_t")
-    Terapeutas = cur.fetchall()
-
-    # 2. Obtener EXCLUSIVAMENTE pacientes que no tienen terapeuta
-    cur.execute("CALL sp_listar_pacientes_sin_asignar('cursor_p', NULL)")
-    cur.execute("FETCH ALL FROM cursor_p")
-    Pacientes = cur.fetchall()
-
-    cur.close()
-    conexion.close()
-    return render_template('nuevaAsignacion.html', Terapeutas=Terapeutas, Pacientes=Pacientes)
-
-# Guardar la asignación en la base de datos
-@app.route('/registra-asignacion', methods=['POST'])
-def registra_asignacion():
-    id_terapeuta = request.form.get('id_terapeuta')
-    id_paciente = request.form.get('id_paciente')
-    id_admin = 1 # ID temporal simulando al usuario Administrador que hace la acción
-
-    conexion = conectar()
-    cur = conexion.cursor()
-    
-    # El SP requiere 3 IN (terapeuta, paciente, asignado_por) y 2 OUT (id_nuevo, mensaje)
-    cur.execute(
-        "CALL sp_asignar_terapeuta_paciente(%s, %s, %s, NULL, NULL)",
-        (id_terapeuta, id_paciente, id_admin)
-    )
-    conexion.commit()
-    cur.close()
-    conexion.close()
-
-    return redirect(url_for('asignaciones'))
-
-# Listar todas las sesiones agendadas
-@app.route('/sesiones')
-def sesiones():
-    # CANDADO 1: Si alguien intenta entrar sin iniciar sesión, lo regresamos al login
-    if 'usuario_rol' not in session:
-        return redirect(url_for('login'))
-        
-    conexion = conectar()
-    cur = conexion.cursor()
-
-    rol = session.get('usuario_rol')
-
-    # Evaluamos qué cursor abrir según el rol
-    if rol == 1:
-        cur.execute("CALL SP_Consultar_Agenda_Global('cursor_agenda', NULL)")
-    elif rol == 2:
-        id_terapeuta = session.get('terapeuta_id')
-        cur.execute("CALL SP_Consultar_Agenda_Terapeuta(%s, 'cursor_agenda', NULL)", (id_terapeuta,))
-    elif rol == 3:
-        id_paciente = session.get('paciente_id')
-        cur.execute("CALL SP_Consultar_Agenda_Paciente(%s, 'cursor_agenda', NULL)", (id_paciente,))
-    
-    # Como ya estamos seguros de que el CALL se ejecutó, extraemos los datos
-    cur.execute("FETCH ALL FROM cursor_agenda")
-    Agenda = cur.fetchall()
-
-    cur.close()
-    conexion.close()
-    return render_template('sesiones.html', Agenda=Agenda)
-
-# Formulario para agendar una sesión
-@app.route('/nuevaSesion')
-def nuevaSesion():
-    conexion = conectar()
-    cur = conexion.cursor()
-
-    # 1. Obtener las Asignaciones Vigentes (Terapeuta-Paciente)
-    cur.execute("CALL SP_Consultar_Asignaciones_Vigentes('cursor_asignaciones', NULL)")
-    cur.execute("FETCH ALL FROM cursor_asignaciones")
-    Asignaciones = cur.fetchall()
-
-    # 2. Obtener las modalidades de sesión
-    cur.execute("CALL SP_Obtener_Modalidades('cursor_modalidades')")
-    cur.execute("FETCH ALL FROM cursor_modalidades")
-    Modalidades = cur.fetchall()
-
-    cur.close()
-    conexion.close()
-    return render_template('nuevaSesion.html', Asignaciones=Asignaciones, Modalidades=Modalidades)
-
-# Guardar la nueva sesión
-@app.route('/registra-sesion', methods=['POST'])
-def registra_sesion():
-    id_asignacion = request.form.get('id_asignacion')
-    id_modalidad = request.form.get('id_modalidad')
-    fecha = request.form.get('fecha')
-    hora_inicio = request.form.get('hora_inicio')
-    hora_fin = request.form.get('hora_fin')
-
-    conexion = conectar()
-    cur = conexion.cursor()
-    
-    cur.execute(
-        "CALL SP_Agendar_Sesion(%s, %s, %s, %s, %s, NULL, NULL)",
-        (id_asignacion, id_modalidad, fecha, hora_inicio, hora_fin)
-    )
-    
-    # Leemos la respuesta de los parámetros OUT (p_id_nueva_sesion, p_mensaje)
-    resultado = cur.fetchone() 
-    conexion.commit()
-    cur.close()
-    conexion.close()
-
-    id_nuevo = resultado[0]
-    mensaje_bd = resultado[1]
-
-    # Validamos si la base de datos bloqueó el registro por empalme
-    if id_nuevo is None:
-        # Hubo un choque de horario. Lo mandamos a la PANTALLA DE ERROR
-        return render_template('errorAgenda.html', mensaje=mensaje_bd)
-    else:
-        # Se agendó bien. Lo mandamos de regreso al calendario
-        return redirect(url_for('sesiones'))
-
-# Cancelar una sesión agendada (Baja lógica)
-@app.route('/cancelar-sesion/<int:id_sesion>', methods=['POST'])
-def cancelar_sesion(id_sesion):
-    conexion = conectar()
-    cur = conexion.cursor()
-    
-    # El SP requiere 1 IN y 1 OUT
-    cur.execute("CALL SP_Cancelar_Sesion(%s, NULL)", (id_sesion,))
-    conexion.commit()
-    
-    cur.close()
-    conexion.close()
-
-    return redirect(url_for('sesiones'))
-
-@app.route('/mis_pacientes')
-def mis_pacientes():
-    # Candado de seguridad: Solo el Rol 2 (Terapeuta) puede entrar
-    if session.get('usuario_rol') != 2:
-        flash('Acceso denegado. Esta vista es exclusiva para el terapeuta.', 'error')
-        return redirect(url_for('sesiones'))
-
-    id_terapeuta = session.get('terapeuta_id')
-
-    conexion = conectar()
-    cur = conexion.cursor()
-
-    # Ejecutamos el SP enviando el ID del terapeuta logueado
-    cur.execute("CALL SP_Consultar_Mis_Pacientes(%s, 'cursor_mis_pacientes')", (id_terapeuta,))
-    cur.execute("FETCH ALL FROM cursor_mis_pacientes")
-    mis_pacientes = cur.fetchall()
-
-    cur.close()
-    conexion.close()
-
-    return render_template('misPacientes.html', pacientes=mis_pacientes)
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        correo = request.form.get('correo')
-        password_ingresada = request.form.get('password')
-
-        conexion = conectar()
-        cur = conexion.cursor()
-        
-        # Consultamos a PostgreSQL
-        cur.execute("CALL SP_Consultar_Usuario_Login(%s, NULL, NULL, NULL, NULL)", (correo,))
-        resultado = cur.fetchone()
-
-        id_usuario = resultado[0]
-        id_rol = resultado[1]
-        password_bd = resultado[2]
-        mensaje_bd = resultado[3]
-
-        if id_usuario is not None:
-            # Validamos si la contraseña coincide
-            if password_ingresada == password_bd:
-                # ¡LOGIN EXITOSO! Guardamos los datos en la credencial temporal de Flask
-                session['usuario_id'] = id_usuario
-                session['usuario_rol'] = id_rol
-                session['usuario_correo'] = correo
-                
-                # Si es terapeuta, buscamos su ID clínico usando el Procedimiento Almacenado
-                if id_rol == 2:
-                    cur.execute("CALL SP_Consultar_Terapeuta_Usuario(%s, NULL)", (id_usuario,))
-                    datos_terapeuta = cur.fetchone()
-                    
-                    if datos_terapeuta and datos_terapeuta[0] is not None:
-                        session['terapeuta_id'] = datos_terapeuta[0]
-                
-                elif id_rol == 3:
-                    cur.execute("CALL SP_Consultar_Paciente_Usuario(%s, NULL)", (id_usuario,))
-                    datos_paciente = cur.fetchone()
-                    
-                    if datos_paciente and datos_paciente[0] is not None:
-                        session['paciente_id'] = datos_paciente[0]
-
-                # Cerramos conexión después de obtener todos los datos
-                conexion.commit()
-                cur.close()
-                conexion.close()
-                return redirect(url_for('principal'))
-            else:
-                flash('Contraseña incorrecta.', 'error')
-        else:
-            flash(mensaje_bd, 'error') # Correo no existe
-
-        # Aseguramos el cierre de conexiones si falla el login
+    rol = session.get("usuario_rol")
+    if rol in (2, 3):
+        return redirect(url_for("sesiones"))
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_metricas_dashboard(NULL, NULL, NULL, NULL)")
+            resultado = cur.fetchone()
         conexion.commit()
-        cur.close()
-        conexion.close()
 
-    return render_template('login.html')
+    metricas = {
+        "pacientes": resultado[0],
+        "terapeutas": resultado[1],
+        "asignaciones": resultado[2],
+        "citas_hoy": resultado[3],
+    }
+    return render_template("index.html", metricas=metricas)
 
-@app.route('/logout')
+
+# ==============================================================================
+# Módulo de Pacientes (Solo Administrador - Rol 1)
+# ==============================================================================
+@app.route("/pacientes")
+@rol_requerido(1)
+def pacientes():
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_pacientes(1, 'cursor_pacientes', NULL)")
+            cur.execute("FETCH ALL FROM cursor_pacientes")
+            lista_pacientes = cur.fetchall()
+    return render_template("registros.html", Pacientes=lista_pacientes)
+
+
+@app.route("/insertar")
+@rol_requerido(1)
+def insertar():
+    return render_template("insertar.html")
+
+
+@app.route("/registra", methods=["POST"])
+@rol_requerido(1)
+def registra():
+    correo = (request.form.get("correo") or "").strip()
+    password_plana = request.form.get("password_hash") or request.form.get("password") or ""
+    nombres = (request.form.get("nombres") or "").strip()
+    apellido_paterno = (request.form.get("apellido_paterno") or "").strip()
+    apellido_materno = (request.form.get("apellido_materno") or "").strip() or None
+    fecha_n = request.form.get("fecha_nacimiento")
+    sexo = request.form.get("sexo") or None
+    tel = (request.form.get("telefono") or "").strip() or None
+
+    if not correo or not password_plana or not nombres or not apellido_paterno or not fecha_n:
+        flash("Por favor completa todos los campos obligatorios.", "error")
+        return redirect(url_for("insertar"))
+
+    password_segura = generate_password_hash(password_plana)
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute(
+                "CALL sp_registrar_paciente(%s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL)",
+                (correo, password_segura, nombres, apellido_paterno, apellido_materno, fecha_n, sexo, tel),
+            )
+            id_nuevo, mensaje_bd = cur.fetchone()
+        conexion.commit()
+
+    categoria = "success" if id_nuevo is not None else "error"
+    flash(mensaje_bd, categoria)
+    return redirect(url_for("pacientes"))
+
+
+@app.route("/editar/<int:id_paciente>", methods=["GET"])
+@rol_requerido(1)
+def editar(id_paciente):
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_obtener_paciente_por_id(%s, 'cursor_paciente', NULL)", (id_paciente,))
+            cur.execute("FETCH ALL FROM cursor_paciente")
+            paciente = cur.fetchone()
+
+    if paciente is None:
+        flash("Paciente no encontrado.", "error")
+        return redirect(url_for("pacientes"))
+
+    return render_template("actualizar.html", Paciente=paciente)
+
+
+@app.route("/actualizar", methods=["POST"])
+@rol_requerido(1)
+def actualizar():
+    id_paciente = request.form.get("id_paciente")
+    tel = (request.form.get("telefono") or "").strip() or None
+    nombres = (request.form.get("nombres") or "").strip()
+    apellido_paterno = (request.form.get("apellido_paterno") or "").strip()
+    apellido_materno = (request.form.get("apellido_materno") or "").strip() or None
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute(
+                "CALL sp_actualizar_paciente(%s, %s, %s, %s, %s, NULL)",
+                (id_paciente, tel, nombres, apellido_paterno, apellido_materno),
+            )
+            (mensaje_bd,) = cur.fetchone()
+        conexion.commit()
+
+    flash(mensaje_bd, "success")
+    return redirect(url_for("pacientes"))
+
+
+@app.route("/borrar/<int:id_paciente>", methods=["POST"])
+@rol_requerido(1)
+def borrar(id_paciente):
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_dar_baja_paciente(%s, NULL)", (id_paciente,))
+            (mensaje_bd,) = cur.fetchone()
+        conexion.commit()
+
+    flash(mensaje_bd, "success")
+    return redirect(url_for("pacientes"))
+
+
+# ==============================================================================
+# Módulo de Terapeutas (Solo Administrador - Rol 1)
+# ==============================================================================
+@app.route("/terapeutas")
+@rol_requerido(1)
+def terapeutas():
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_terapeutas(1, 'cursor_terapeutas', NULL)")
+            cur.execute("FETCH ALL FROM cursor_terapeutas")
+            lista_terapeutas = cur.fetchall()
+    return render_template("terapeutas.html", Terapeutas=lista_terapeutas)
+
+
+@app.route("/insertarTerapeuta")
+@rol_requerido(1)
+def insertarTerapeuta():
+    return render_template("insertarTerapeuta.html")
+
+
+@app.route("/registra-terapeuta", methods=["POST"])
+@rol_requerido(1)
+def registra_terapeuta():
+    correo = (request.form.get("correo") or "").strip()
+    password_plana = request.form.get("password_hash") or request.form.get("password") or ""
+    nombres = (request.form.get("nombres") or "").strip()
+    apellido_paterno = (request.form.get("apellido_paterno") or "").strip()
+    apellido_materno = (request.form.get("apellido_materno") or "").strip() or None
+    cedula = (request.form.get("cedula_profesional") or "").strip()
+
+    if not correo or not password_plana or not nombres or not apellido_paterno or not cedula:
+        flash("Por favor completa todos los campos obligatorios.", "error")
+        return redirect(url_for("insertarTerapeuta"))
+
+    password_segura = generate_password_hash(password_plana)
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute(
+                "CALL sp_registrar_terapeuta(%s, %s, %s, %s, %s, %s, NULL, NULL)",
+                (correo, password_segura, nombres, apellido_paterno, apellido_materno, cedula),
+            )
+            id_nuevo, mensaje_bd = cur.fetchone()
+        conexion.commit()
+
+    categoria = "success" if id_nuevo is not None else "error"
+    flash(mensaje_bd, categoria)
+    return redirect(url_for("terapeutas"))
+
+
+@app.route("/editarTerapeuta/<int:id_terapeuta>", methods=["GET"])
+@rol_requerido(1)
+def editarTerapeuta(id_terapeuta):
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_obtener_terapeuta_por_id(%s, 'cursor_terapeuta', NULL)", (id_terapeuta,))
+            cur.execute("FETCH ALL FROM cursor_terapeuta")
+            terapeuta = cur.fetchone()
+
+    if terapeuta is None:
+        flash("Terapeuta no encontrado.", "error")
+        return redirect(url_for("terapeutas"))
+
+    return render_template("actualizarTerapeuta.html", Terapeuta=terapeuta)
+
+
+@app.route("/actualizar-terapeuta", methods=["POST"])
+@rol_requerido(1)
+def actualizar_terapeuta():
+    id_terapeuta = request.form.get("id_terapeuta")
+    nombres = (request.form.get("nombres") or "").strip()
+    apellido_paterno = (request.form.get("apellido_paterno") or "").strip()
+    apellido_materno = (request.form.get("apellido_materno") or "").strip() or None
+    cedula = (request.form.get("cedula_profesional") or "").strip()
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute(
+                "CALL sp_actualizar_terapeuta(%s, %s, %s, %s, %s, NULL)",
+                (id_terapeuta, nombres, apellido_paterno, apellido_materno, cedula),
+            )
+            (mensaje_bd,) = cur.fetchone()
+        conexion.commit()
+
+    flash(mensaje_bd, "success")
+    return redirect(url_for("terapeutas"))
+
+
+@app.route("/borrarTerapeuta/<int:id_terapeuta>", methods=["POST"])
+@rol_requerido(1)
+def borrarTerapeuta(id_terapeuta):
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_dar_baja_terapeuta(%s, NULL)", (id_terapeuta,))
+            (mensaje_bd,) = cur.fetchone()
+        conexion.commit()
+
+    flash(mensaje_bd, "success")
+    return redirect(url_for("terapeutas"))
+
+
+# ==============================================================================
+# Módulo de Asignaciones (Solo Administrador - Rol 1)
+# ==============================================================================
+@app.route("/asignaciones")
+@rol_requerido(1)
+def asignaciones():
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_asignaciones_vigentes('cursor_asignaciones', NULL)")
+            cur.execute("FETCH ALL FROM cursor_asignaciones")
+            lista_asignaciones = cur.fetchall()
+    return render_template("asignaciones.html", Asignaciones=lista_asignaciones)
+
+
+@app.route("/nuevaAsignacion")
+@rol_requerido(1)
+def nuevaAsignacion():
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_terapeutas(1, 'cursor_t', NULL)")
+            cur.execute("FETCH ALL FROM cursor_t")
+            lista_terapeutas = cur.fetchall()
+
+            cur.execute("CALL sp_listar_pacientes_sin_asignar('cursor_p', NULL)")
+            cur.execute("FETCH ALL FROM cursor_p")
+            lista_pacientes = cur.fetchall()
+
+    return render_template("nuevaAsignacion.html", Terapeutas=lista_terapeutas, Pacientes=lista_pacientes)
+
+
+@app.route("/registra-asignacion", methods=["POST"])
+@rol_requerido(1)
+def registra_asignacion():
+    id_terapeuta = request.form.get("id_terapeuta")
+    id_paciente = request.form.get("id_paciente")
+    id_admin = session.get("usuario_id")
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute(
+                "CALL sp_asignar_terapeuta_paciente(%s, %s, %s, NULL, NULL)",
+                (id_terapeuta, id_paciente, id_admin),
+            )
+            id_asignacion, mensaje_bd = cur.fetchone()
+        conexion.commit()
+
+    categoria = "success" if id_asignacion is not None else "error"
+    flash(mensaje_bd, categoria)
+    return redirect(url_for("asignaciones"))
+
+
+# ==============================================================================
+# Módulo de Agenda y Sesiones (Roles 1, 2 y 3 con alcance por rol y propiedad)
+# ==============================================================================
+@app.route("/sesiones")
+@rol_requerido(1, 2, 3)
+def sesiones():
+    rol = session.get("usuario_rol")
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            if rol == 1:
+                cur.execute("CALL sp_consultar_agenda_global('cursor_agenda', NULL)")
+            elif rol == 2:
+                id_terapeuta = session.get("terapeuta_id")
+                cur.execute("CALL sp_consultar_agenda_terapeuta(%s, 'cursor_agenda', NULL)", (id_terapeuta,))
+            else:
+                id_paciente = session.get("paciente_id")
+                cur.execute("CALL sp_consultar_agenda_paciente(%s, 'cursor_agenda', NULL)", (id_paciente,))
+
+            cur.execute("FETCH ALL FROM cursor_agenda")
+            agenda = cur.fetchall()
+
+    return render_template("sesiones.html", Agenda=agenda)
+
+
+@app.route("/nuevaSesion")
+@rol_requerido(1, 2)
+def nuevaSesion():
+    rol = session.get("usuario_rol")
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            if rol == 1:
+                cur.execute("CALL sp_consultar_asignaciones_vigentes('cursor_asignaciones', NULL)")
+            else:
+                id_terapeuta = session.get("terapeuta_id")
+                cur.execute(
+                    "CALL sp_consultar_asignaciones_terapeuta(%s, 'cursor_asignaciones', NULL)",
+                    (id_terapeuta,),
+                )
+            cur.execute("FETCH ALL FROM cursor_asignaciones")
+            lista_asignaciones = cur.fetchall()
+
+            cur.execute("CALL sp_obtener_modalidades('cursor_modalidades')")
+            cur.execute("FETCH ALL FROM cursor_modalidades")
+            modalidades = cur.fetchall()
+
+    return render_template("nuevaSesion.html", Asignaciones=lista_asignaciones, Modalidades=modalidades)
+
+
+@app.route("/registra-sesion", methods=["POST"])
+@rol_requerido(1, 2)
+def registra_sesion():
+    id_asignacion = request.form.get("id_asignacion")
+    id_modalidad = request.form.get("id_modalidad")
+    fecha = request.form.get("fecha")
+    hora_inicio = request.form.get("hora_inicio")
+    hora_fin = request.form.get("hora_fin")
+
+    if hora_inicio and hora_fin and hora_fin <= hora_inicio:
+        return render_template(
+            "errorAgenda.html",
+            mensaje="La hora de fin debe ser posterior a la hora de inicio.",
+        )
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            # Si es terapeuta, validar que la asignación le pertenezca
+            if session.get("usuario_rol") == 2:
+                cur.execute(
+                    "CALL sp_validar_propiedad_asignacion(%s, %s, NULL, NULL)",
+                    (id_asignacion, session.get("terapeuta_id")),
+                )
+                es_propietario, msg_prop = cur.fetchone()
+                if not es_propietario:
+                    flash(msg_prop, "error")
+                    return redirect(url_for("sesiones"))
+
+            cur.execute(
+                "CALL sp_agendar_sesion(%s, %s, %s, %s, %s, NULL, NULL)",
+                (id_asignacion, id_modalidad, fecha, hora_inicio, hora_fin),
+            )
+            id_nuevo, mensaje_bd = cur.fetchone()
+        conexion.commit()
+
+    if id_nuevo is None:
+        return render_template("errorAgenda.html", mensaje=mensaje_bd)
+
+    flash(mensaje_bd, "success")
+    return redirect(url_for("sesiones"))
+
+
+@app.route("/cancelar-sesion/<int:id_sesion>", methods=["POST"])
+@rol_requerido(1, 2)
+def cancelar_sesion(id_sesion):
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            if session.get("usuario_rol") == 2:
+                cur.execute(
+                    "CALL sp_validar_propiedad_sesion(%s, %s, NULL, NULL)",
+                    (id_sesion, session.get("terapeuta_id")),
+                )
+                tiene_acceso, msg_prop = cur.fetchone()
+                if not tiene_acceso:
+                    flash(msg_prop, "error")
+                    return redirect(url_for("sesiones"))
+
+            cur.execute("CALL sp_cancelar_sesion(%s, NULL)", (id_sesion,))
+            (mensaje_bd,) = cur.fetchone()
+        conexion.commit()
+
+    flash(mensaje_bd, "success")
+    return redirect(url_for("sesiones"))
+
+
+# ==============================================================================
+# Módulo del Terapeuta (Solo Terapeuta - Rol 2)
+# ==============================================================================
+@app.route("/mis_pacientes")
+@rol_requerido(2)
+def mis_pacientes():
+    id_terapeuta = session.get("terapeuta_id")
+
+    with conectar() as conexion:
+        with conexion.cursor() as cur:
+            cur.execute("CALL sp_consultar_mis_pacientes(%s, 'cursor_mis_pacientes')", (id_terapeuta,))
+            cur.execute("FETCH ALL FROM cursor_mis_pacientes")
+            lista_mis_pacientes = cur.fetchall()
+
+    return render_template("misPacientes.html", pacientes=lista_mis_pacientes)
+
+
+# ==============================================================================
+# Autenticación (Login / Logout con hashes seguros Werkzeug)
+# ==============================================================================
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET" and "usuario_id" in session:
+        return redirect(url_for("principal"))
+
+    if request.method == "POST":
+        correo = (request.form.get("correo") or "").strip()
+        password_ingresada = request.form.get("password") or ""
+
+        with conectar() as conexion:
+            with conexion.cursor() as cur:
+                cur.execute("CALL sp_obtener_usuario_login(%s, NULL, NULL, NULL, NULL, NULL)", (correo,))
+                id_usuario, id_rol, password_hash_bd, id_estado, mensaje_bd = cur.fetchone()
+
+                if id_usuario is None:
+                    flash(mensaje_bd or "El correo no existe en el sistema.", "error")
+                elif id_estado != 1:
+                    flash("Tu cuenta se encuentra inactiva. Contacta al administrador.", "error")
+                elif not password_hash_bd or not check_password_hash(password_hash_bd, password_ingresada):
+                    flash("Contraseña incorrecta.", "error")
+                else:
+                    session.clear()
+                    session["usuario_id"] = id_usuario
+                    session["usuario_rol"] = id_rol
+                    session["usuario_correo"] = correo
+
+                    if id_rol == 2:
+                        cur.execute("CALL sp_consultar_terapeuta_usuario(%s, NULL)", (id_usuario,))
+                        datos_terapeuta = cur.fetchone()
+                        if datos_terapeuta and datos_terapeuta[0] is not None:
+                            session["terapeuta_id"] = datos_terapeuta[0]
+                    elif id_rol == 3:
+                        cur.execute("CALL sp_consultar_paciente_usuario(%s, NULL)", (id_usuario,))
+                        datos_paciente = cur.fetchone()
+                        if datos_paciente and datos_paciente[0] is not None:
+                            session["paciente_id"] = datos_paciente[0]
+
+                    cur.execute("CALL sp_registrar_acceso_usuario(%s, NULL)", (id_usuario,))
+                    conexion.commit()
+                    flash("Sesión iniciada correctamente.", "success")
+                    return redirect(url_for("principal"))
+
+            conexion.commit()
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
 def logout():
-    session.clear() # Destruimos la sesión temporal
-    return redirect(url_for('login'))
+    session.clear()
+    flash("Has cerrado sesión correctamente.", "success")
+    return redirect(url_for("login"))
 
 
+if __name__ == "__main__":
+    ok, msg = verificar_conexion_bd()
+    print(f"[BD] {msg}")
+    if not ok:
+        raise SystemExit(1)
+
+    host = os.environ.get("FLASK_HOST", "127.0.0.1")
+    port = int(os.environ.get("FLASK_PORT", "5000"))
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host=host, port=port, debug=debug)
